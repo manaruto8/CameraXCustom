@@ -291,7 +291,7 @@ class MainActivity : AppCompatActivity() {
             .setTargetRotation(mBinding.cameraPreview.display.rotation)
             .build()
 
-        //视频设置
+        //视频设置  如果list中所有请求分辨率都不受支持  会通过FallbackStrategy的设置选择最接近该分辨率的
         val qualitySelector = QualitySelector.fromOrderedList(
             listOf(Quality.UHD, Quality.FHD, Quality.HD, Quality.SD),
             FallbackStrategy.lowerQualityOrHigherThan(Quality.SD))
