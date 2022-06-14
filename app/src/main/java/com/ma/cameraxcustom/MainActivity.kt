@@ -290,18 +290,6 @@ class MainActivity : AppCompatActivity() {
             .setTargetResolution(Size(d.widthPixels,d.heightPixels))
             .setTargetRotation(mBinding.cameraPreview.display.rotation)
             .build()
-        val orientationEventListener = object : OrientationEventListener(this) {
-            override fun onOrientationChanged(orientation : Int) {
-                val rotation : Int = when (orientation) {
-                    in 45..134 -> Surface.ROTATION_270
-                    in 135..224 -> Surface.ROTATION_180
-                    in 225..314 -> Surface.ROTATION_90
-                    else -> Surface.ROTATION_0
-                }
-                imageCapture?.targetRotation = rotation
-            }
-        }
-        orientationEventListener.enable()
 
         //视频设置
         val qualitySelector = QualitySelector.fromOrderedList(
@@ -311,6 +299,21 @@ class MainActivity : AppCompatActivity() {
             .setExecutor(cameraExecutor).setQualitySelector(qualitySelector)
             .build()
         videoCapture = VideoCapture.withOutput(recorder)
+
+        //拍摄旋转角度监听
+        val orientationEventListener = object : OrientationEventListener(this) {
+            override fun onOrientationChanged(orientation : Int) {
+                val rotation : Int = when (orientation) {
+                    in 45..134 -> Surface.ROTATION_270
+                    in 135..224 -> Surface.ROTATION_180
+                    in 225..314 -> Surface.ROTATION_90
+                    else -> Surface.ROTATION_0
+                }
+                imageCapture?.targetRotation = rotation
+                videoCapture?.targetRotation=rotation
+            }
+        }
+        orientationEventListener.enable()
 
         //监听点击事件进行手动对焦
         mBinding.cameraPreview.setOnTouchListener { _, motionEvent ->
