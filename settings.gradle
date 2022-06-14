@@ -1,0 +1,2 @@
+rootProject.name = "CameraXCustom"
+include ':app'
