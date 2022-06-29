@@ -6,6 +6,7 @@ import android.app.Activity
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraCharacteristics
 import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
@@ -14,7 +15,7 @@ import android.util.Size
 import android.view.*
 import android.widget.MediaController
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.*
@@ -22,18 +23,14 @@ import androidx.camera.video.VideoCapture
 import androidx.core.content.ContextCompat
 import androidx.core.util.Consumer
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.lifecycleScope
-import com.ma.cameraxcustom.databinding.ActivityMainBinding
-import kotlinx.coroutines.launch
+import com.ma.cameraxcustom.databinding.ActivityCameraxBinding
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-class MainActivity : AppCompatActivity() {
-
-    private val TAG="abc"
+class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
 
     private var lensFacing: Int = CameraSelector.LENS_FACING_BACK
     private var imageCapture: ImageCapture? =null
@@ -42,31 +39,18 @@ class MainActivity : AppCompatActivity() {
     private var videoStatus: Boolean = false
     private var camera: Camera? = null
     private var cameraProvider: ProcessCameraProvider? = null
-    private lateinit var mBinding:ActivityMainBinding
     private lateinit var cameraExecutor: ExecutorService
+    private var type=1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        mBinding = ActivityMainBinding.inflate(layoutInflater);
+        mBinding = ActivityCameraxBinding.inflate(layoutInflater)
         setContentView(mBinding.root)
-        window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_IMMERSIVE
-                // Set the content to appear under the system bars so that the
-                // content doesn't resize when the system bars hide and show.
-                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                // Hide the nav bar and status bar
-                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                or View.SYSTEM_UI_FLAG_FULLSCREEN)
-        actionBar?.hide()
         initView()
     }
 
-    private fun initView() {
-        mBinding.rlCompoCamera.visibility=View.VISIBLE
-        mBinding.rlCompoPhoto.visibility=View.INVISIBLE
-        mBinding.ivPhoto.visibility=View.INVISIBLE
-        mBinding.videoView.visibility=View.GONE
+
+    override fun initView() {
         mBinding.ivCamera.setOnClickListener {
             Log.e(TAG, "initView: 拍照" )
             takePicture()
@@ -81,8 +65,8 @@ class MainActivity : AppCompatActivity() {
         mBinding.ivCamera.setOnTouchListener(){view,event->
             when(event.action){
                 MotionEvent.ACTION_UP->{
-                    Log.e(TAG, "initView: 视频停止" )
                     if(videoStatus){
+                        Log.e(TAG, "initView: 视频停止" )
                         currentRecording?.stop()
                     }
                 }
@@ -104,14 +88,18 @@ class MainActivity : AppCompatActivity() {
         mBinding.ivFlash.setOnClickListener {
             camera?.cameraControl?.enableTorch(camera?.cameraInfo?.torchState?.value != TorchState.ON)
         }
-        mBinding.tvAgain.setOnClickListener {
-            mBinding.rlCompoCamera.visibility=View.VISIBLE
-            mBinding.rlCompoPhoto.visibility=View.INVISIBLE
-            mBinding.ivPhoto.visibility=View.INVISIBLE
-            mBinding.videoView.visibility=View.INVISIBLE
-        }
-        mBinding.tvUse.setOnClickListener {
 
+
+        //监听点击事件进行手动对焦
+        mBinding.cameraPreview.setOnTouchListener { _, motionEvent ->
+            val meteringPoint = mBinding.cameraPreview.meteringPointFactory
+                .createPoint(motionEvent.x, motionEvent.y)
+            val action = FocusMeteringAction.Builder(meteringPoint)
+                .addPoint(meteringPoint, FocusMeteringAction.FLAG_AF)
+                .setAutoCancelDuration(3, TimeUnit.SECONDS)
+                .build()
+            camera?.cameraControl?.startFocusAndMetering(action)
+            false
         }
         checkPremission()
     }
@@ -133,14 +121,25 @@ class MainActivity : AppCompatActivity() {
         openCamera()
     }
 
+
+    /**
+     * 显示照片或视频
+     */
+    private fun showResult(uri: Uri?) {
+        uri?:return
+        val intent =  Intent(this, ShowResultActivity::class.java)
+        intent.putExtra("type",type)
+        intent.putExtra("uri",uri.toString())
+        startActivity(intent)
+    }
+
     /**
      * 拍照
      */
     private fun takePicture() {
-        val sdf = SimpleDateFormat("_yyyyMMdd_hhmmss")
-        val currentDate = sdf.format(Date())
+        val currentDate = SimpleDateFormat("yyyyMMdd_hhmmss").format(Date())
         val contentValue = ContentValues()
-        contentValue.put(MediaStore.Images.Media.DISPLAY_NAME,"camera${currentDate}")
+        contentValue.put(MediaStore.Images.Media.DISPLAY_NAME,"camerax_${currentDate}")
         contentValue.put(MediaStore.Images.Media.MIME_TYPE, "image/png")
         contentValue.put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/CameraX")
         contentValue.put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis())
@@ -157,25 +156,15 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    showPhoto(outputFileResults.savedUri)
+                    type=1
+                    showResult(outputFileResults.savedUri)
                 }
             })
     }
 
     /**
-     * 显示照片
+     * 打开相册
      */
-    private fun showPhoto(uri: Uri?) {
-        uri?:return
-        mBinding.ivPhoto.setImageURI(uri)
-        mBinding.rlCompoCamera.visibility=View.INVISIBLE
-        mBinding.rlCompoPhoto.visibility=View.VISIBLE
-        mBinding.ivPhoto.visibility=View.VISIBLE
-        mBinding.videoView.visibility=View.INVISIBLE
-    }
-
-
-
     private fun openAlbum() {
         val intent = Intent(Intent.ACTION_PICK ,MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
         intent.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*")
@@ -190,7 +179,8 @@ class MainActivity : AppCompatActivity() {
     private val activityLuncher=registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         //此处是跳转的result回调方法
         if (it.data != null && it.resultCode == Activity.RESULT_OK) {
-            showPhoto(it.data?.data)
+            type=1
+            showResult(it.data?.data)
         } else {
 
         }
@@ -201,10 +191,9 @@ class MainActivity : AppCompatActivity() {
      */
     @SuppressLint("MissingPermission")
     private fun startRecording() {
-        val sdf = SimpleDateFormat("_yyyyMMdd_hhmmss")
-        val currentDate = sdf.format(Date())
+        val currentDate = SimpleDateFormat("yyyyMMdd_hhmmss").format(Date())
         val contentValue = ContentValues()
-        contentValue.put(MediaStore.Video.Media.DISPLAY_NAME,"videoo${currentDate}")
+        contentValue.put(MediaStore.Video.Media.DISPLAY_NAME,"camerax_video_${currentDate}")
         contentValue.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
         contentValue.put(MediaStore.Video.Media.RELATIVE_PATH, "DCIM/CameraX")
         contentValue.put(MediaStore.Video.Media.DATE_ADDED, System.currentTimeMillis())
@@ -220,6 +209,7 @@ class MainActivity : AppCompatActivity() {
         Log.e(TAG, "initView: 视频开始" )
     }
 
+    //视频事件回调
     private val captureListener = Consumer<VideoRecordEvent> { event ->
         when (event) {
             is VideoRecordEvent.Status -> {
@@ -232,7 +222,8 @@ class MainActivity : AppCompatActivity() {
             is VideoRecordEvent.Finalize-> {
                 videoStatus=false
                 Log.e(TAG, "VideoRecordEvent.Finalize" )
-                showVedio(event.outputResults.outputUri)
+                type=2
+                showResult(event.outputResults.outputUri)
             }
             is VideoRecordEvent.Pause -> {
                 Log.e(TAG, "VideoRecordEvent.Pause" )
@@ -244,23 +235,6 @@ class MainActivity : AppCompatActivity() {
 
     }
 
-    /**
-     * 显示视频
-     */
-    private fun showVedio(uri: Uri?) {
-        uri?:return
-        val mc = MediaController(this)
-        mBinding.videoView.apply {
-            setVideoURI(uri)
-            setMediaController(mc)
-            requestFocus()
-        }.start()
-        mc.show(0)
-        mBinding.rlCompoCamera.visibility=View.INVISIBLE
-        mBinding.rlCompoPhoto.visibility=View.VISIBLE
-        mBinding.ivPhoto.visibility=View.INVISIBLE
-        mBinding.videoView.visibility=View.VISIBLE
-    }
 
     private fun openCamera() {
         cameraExecutor = Executors.newSingleThreadExecutor()
@@ -287,7 +261,7 @@ class MainActivity : AppCompatActivity() {
 
         //拍照设置
         imageCapture = ImageCapture.Builder()
-            .setTargetResolution(Size(d.widthPixels,d.heightPixels))
+            .setTargetResolution(Size(d.widthPixels,d.heightPixels))//设置相机分辨率
             .setTargetRotation(mBinding.cameraPreview.display.rotation)
             .build()
 
@@ -314,19 +288,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
         orientationEventListener.enable()
-
-        //监听点击事件进行手动对焦
-        mBinding.cameraPreview.setOnTouchListener { _, motionEvent ->
-            val meteringPoint = mBinding.cameraPreview.meteringPointFactory
-                .createPoint(motionEvent.x, motionEvent.y)
-            val action = FocusMeteringAction.Builder(meteringPoint)
-                .addPoint(meteringPoint, FocusMeteringAction.FLAG_AF)
-                .setAutoCancelDuration(3, TimeUnit.SECONDS)
-                .build()
-            camera?.cameraControl?.startFocusAndMetering(action)
-            false
-        }
-
         preview.setSurfaceProvider(mBinding.cameraPreview.surfaceProvider)
         cameraProvider?.unbindAll()
         camera=cameraProvider?.bindToLifecycle(this as LifecycleOwner, cameraSelector,imageCapture,videoCapture, preview)
