@@ -66,7 +66,13 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
 
         }
         mBinding.ivSwitch.setOnClickListener {
-
+            releaseCamera()
+            if(lensFacing==Camera.CameraInfo.CAMERA_FACING_BACK){
+                lensFacing=Camera.CameraInfo.CAMERA_FACING_FRONT
+            }else{
+                lensFacing=Camera.CameraInfo.CAMERA_FACING_BACK
+            }
+            openCamera()
         }
         mBinding.ivFlash.setOnClickListener {
 
@@ -74,10 +80,8 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
 
 
         mBinding.surfaceView.setOnTouchListener { _, motionEvent ->
-            val areaX =
-                (motionEvent.x / mBinding.surfaceView.width * 2000) - 1000 // 获取映射区域的X坐标
-            val areaY =
-                (motionEvent.y / mBinding.surfaceView.height * 2000) - 1000 // 获取映射区域的Y坐标
+            val areaX = (motionEvent.x / mBinding.surfaceView.width * 2000) - 1000 // 获取映射区域的X坐标
+            val areaY = (motionEvent.y / mBinding.surfaceView.height * 2000) - 1000 // 获取映射区域的Y坐标
 
             // 创建Rect区域
             val focusArea = Rect()
@@ -95,9 +99,7 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
                 focusAreas.add(cameraArea)
             }
             mParameters?.focusMode = Camera.Parameters.FOCUS_MODE_AUTO // 设置对焦模式
-
             mParameters?.focusAreas = focusAreas // 设置对焦区域
-
             mParameters?.meteringAreas = meteringAreas // 设置测光区域
 
             try {
@@ -149,13 +151,7 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
     }
 
     override fun onAutoFocus(p0: Boolean, p1: Camera?) {
-        if(p0){
-            mCamera?.cancelAutoFocus()
-            mParameters= mCamera?.parameters
-            mParameters?.focusMode = Camera.Parameters.FOCUS_MODE_AUTO
-            mCamera?.parameters=mParameters
-            mCamera?.cancelAutoFocus()
-        }
+
     }
 
 
@@ -193,6 +189,8 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         } catch (e: IOException) {
             Log.d(TAG, "Error accessing file: ${e.message}")
         }
+        type=1
+        showResult(uri)
     }
 
     /**
@@ -213,13 +211,12 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         try {
             mCamera=Camera.open(lensFacing)
             mParameters= mCamera?.parameters
-            mParameters?.focusMode = Camera.Parameters.FOCUS_MODE_AUTO
+            mParameters?.focusMode = Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE
             mCamera?.parameters=mParameters
             mCamera?.setPreviewCallback(this)
             mCamera?.setPreviewDisplay(mSurfaceHolder)
             setCameraDisplayOrientation()
             mCamera?.startPreview()
-            mCamera?.cancelAutoFocus();
         } catch (e: Exception) {
             Log.e(TAG, "打开相机失败${e.message}" )
         }
@@ -243,7 +240,7 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         } else {  // back-facing
             result = (info.orientation - degrees + 360) % 360
         }
-        Log.e(TAG, "setCameraDisplayOrientation: degrees" + degrees + "---rotation" + info.orientation + "---result" + result)
+        Log.e(TAG, "setCameraDisplayOrientation: degrees：" + degrees + "---rotation：" + info.orientation + "---result：" + result)
         mCamera?.setDisplayOrientation(result)
     }
 
@@ -252,6 +249,7 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         var cameraNum=0
         for (i in 0 until Camera.getNumberOfCameras()) {
             Camera.getCameraInfo(i, info)
+            Log.e(TAG, "当前摄像头ID："+i+"---位置："+info.facing)
             if (info.facing ==lensFacing){
                 cameraNum++
             }
@@ -260,8 +258,14 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
     }
 
     private fun releaseCamera() {
+        mCamera?.setPreviewCallback(null);
+        mCamera?.stopPreview();
         mCamera?.release()
         mCamera = null
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        releaseCamera()
+    }
 }
