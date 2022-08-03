@@ -4,7 +4,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context=".CameraXActivity">
+    tools:context=".CameraActivity">
 
     <SurfaceView
         android:id="@+id/surfaceView"
@@ -70,5 +70,13 @@
         android:layout_alignParentTop="true"
         android:layout_alignParentRight="true"
         />
-
+    <TextView
+        android:visibility="gone"
+        android:id="@+id/tv_tips"
+        android:layout_width="match_parent"
+        android:layout_height="30dp"
+        android:background="@color/mask"
+        android:text="正在录制"
+        android:textColor="@color/white"
+        android:gravity="center" />
 </RelativeLayout>

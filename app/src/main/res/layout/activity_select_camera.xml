@@ -16,7 +16,8 @@
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintRight_toRightOf="parent"
         app:layout_constraintTop_toTopOf="parent"
-        android:text="CameraX"/>
+        android:text="CameraX"
+        android:textColor="@color/white"/>
 
     <TextView
         android:id="@+id/camera2Tv"
@@ -28,7 +29,8 @@
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintRight_toRightOf="parent"
         app:layout_constraintTop_toBottomOf="@id/cameraxTv"
-        android:text="Camera2"/>
+        android:text="Camera2"
+        android:textColor="@color/white"/>
 
     <TextView
         android:id="@+id/cameraTv"
@@ -40,6 +42,7 @@
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintRight_toRightOf="parent"
         app:layout_constraintTop_toBottomOf="@id/camera2Tv"
-        android:text="Camera"/>
+        android:text="Camera"
+        android:textColor="@color/white"/>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -2,26 +2,36 @@ package com.ma.cameraxcustom
 
 
 import android.Manifest
-import android.R.attr.x
-import android.R.attr.y
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.ContentUris
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.database.Cursor
 import android.graphics.Rect
 import android.hardware.Camera
+import android.media.CamcorderProfile
+import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.SurfaceHolder
+import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.ma.cameraxcustom.databinding.ActivityCameraBinding
-import java.io.*
+import java.io.File
+import java.io.FileNotFoundException
+import java.io.FileOutputStream
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -32,7 +42,10 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
     private var mCamera: Camera? = null
     private var mParameters: Camera.Parameters? = null
     private lateinit var mSurfaceHolder: SurfaceHolder
+    private var videoStatus: Boolean = false
+    private var mediaRecorder:MediaRecorder?=null
     private var type=1
+    private var mediaFile:File?=null
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,32 +58,44 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
     override fun initView() {
         mBinding.ivCamera.setOnClickListener {
             Log.e(TAG, "initView: 拍照" )
+            type=1
             mCamera?.takePicture(null,null,this)
         }
         mBinding.ivCamera.setOnLongClickListener {
-            Log.e(TAG, "initView: 视频" )
-
+            if(!videoStatus) {
+                Log.e(TAG, "initView: 视频开始" )
+                type=2
+                mBinding.tvTips.visibility= View.VISIBLE
+                startRecording()
+            }
             true
         }
         mBinding.ivCamera.setOnTouchListener { view, event->
             when(event.action){
                 MotionEvent.ACTION_UP->{
-                    Log.e(TAG, "initView: 视频停止" )
-
+                    if(videoStatus){
+                        Log.e(TAG, "initView: 视频停止" )
+                        mBinding.tvTips.visibility=View.GONE
+                        mediaRecorder?.stop()  // stop the recording
+                        releaseMediaRecorder() // release the MediaRecorder object
+                        videoStatus=false
+                        showResult(Uri.fromFile(mediaFile))
+                    }
                 }
 
             }
             false
         }
         mBinding.ivAlbum.setOnClickListener {
-
+            type=1
+            openAlbum()
         }
         mBinding.ivSwitch.setOnClickListener {
             releaseCamera()
-            if(lensFacing==Camera.CameraInfo.CAMERA_FACING_BACK){
-                lensFacing=Camera.CameraInfo.CAMERA_FACING_FRONT
+            lensFacing = if(lensFacing==Camera.CameraInfo.CAMERA_FACING_BACK){
+                Camera.CameraInfo.CAMERA_FACING_FRONT
             }else{
-                lensFacing=Camera.CameraInfo.CAMERA_FACING_BACK
+                Camera.CameraInfo.CAMERA_FACING_BACK
             }
             openCamera()
         }
@@ -79,6 +104,7 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         }
 
 
+        //监听点击事件进行手动对焦
         mBinding.surfaceView.setOnTouchListener { _, motionEvent ->
             val areaX = (motionEvent.x / mBinding.surfaceView.width * 2000) - 1000 // 获取映射区域的X坐标
             val areaY = (motionEvent.y / mBinding.surfaceView.height * 2000) - 1000 // 获取映射区域的Y坐标
@@ -159,50 +185,155 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
 
     }
 
-    override fun onPictureTaken(p0: ByteArray?, p1: Camera?) {
-        p1?.startPreview()
-        val currentDate = SimpleDateFormat("yyyyMMdd_hhmmss").format(Date())
-        val contentValue = ContentValues()
-        contentValue.put(MediaStore.Images.Media.DISPLAY_NAME,"camera_${currentDate}")
-        contentValue.put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-        contentValue.put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/CameraX")
-        contentValue.put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis())
-
-        val collection =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                MediaStore.Images.Media.getContentUri(
-                    MediaStore.VOLUME_EXTERNAL_PRIMARY
-                )
-            } else {
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-            }
-        val uri = contentResolver.insert(collection, contentValue)
-
-        try {
-            uri?.let {
-                val fos =contentResolver.openOutputStream(it)
-                fos?.write(p0)
-                fos?.close()
-            }
-        } catch (e: FileNotFoundException) {
-            Log.d(TAG, "File not found: ${e.message}")
-        } catch (e: IOException) {
-            Log.d(TAG, "Error accessing file: ${e.message}")
-        }
-        type=1
-        showResult(uri)
-    }
-
     /**
      * 显示照片或视频
      */
     private fun showResult(uri: Uri?) {
         uri?:return
+        Log.e(TAG, "showResult: $uri||| ${uri.path}" )
         val intent =  Intent(this, ShowResultActivity::class.java)
         intent.putExtra("type",type)
         intent.putExtra("uri",uri.toString())
         startActivity(intent)
     }
+
+    /**
+     * 拍照回调
+     */
+    override fun onPictureTaken(p0: ByteArray?, p1: Camera?) {
+        p1?.startPreview()
+        getOutputMediaFile()
+        try {
+            val fos = FileOutputStream(mediaFile)
+            fos.write(p0)
+            fos.close()
+        } catch (e: FileNotFoundException) {
+            Log.d(TAG, "File not found: ${e.message}")
+        } catch (e: IOException) {
+            Log.d(TAG, "Error accessing file: ${e.message}")
+        }
+        showResult(Uri.fromFile(mediaFile))
+    }
+
+
+    /**
+     * 打开相册
+     */
+    private fun openAlbum() {
+        val intent = Intent(Intent.ACTION_PICK ,MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+        intent.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*")
+
+//        打开文件管理器筛选图片
+//        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+//        intent.addCategory(Intent.CATEGORY_OPENABLE)
+//        intent.type = "image/*"
+
+        activityLuncher.launch(intent)
+    }
+
+    private val activityLuncher=registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (it.data != null && it.resultCode == Activity.RESULT_OK) {
+            showResult(it.data?.data)
+        } else {
+
+        }
+    }
+
+    /**
+     * 视频
+     */
+    private fun startRecording() {
+
+        getOutputMediaFile()
+        mediaRecorder = MediaRecorder()
+
+        // Step 1: Unlock and set camera to MediaRecorder
+        mCamera?.unlock()
+        mediaRecorder?.setCamera(mCamera)
+
+        // Step 2: Set sources
+        mediaRecorder?.setAudioSource(MediaRecorder.AudioSource.CAMCORDER)
+        mediaRecorder?.setVideoSource(MediaRecorder.VideoSource.CAMERA)
+
+        // Step 3: Set a CamcorderProfile (requires API Level 8 or higher)
+        mediaRecorder?.setProfile(CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH))
+
+        // Step 4: Set output file
+        mediaRecorder?.setOutputFile(mediaFile?.absolutePath)
+
+        mediaRecorder?.setOrientationHint(getCameraDisplayOrientation())
+        // Step 5: Set the preview output
+        mediaRecorder?.setPreviewDisplay(mBinding.surfaceView.holder.surface)
+
+        // Step 6: Prepare configured MediaRecorder
+        try {
+            mediaRecorder?.prepare()
+            mediaRecorder?.start()
+            videoStatus=true
+        } catch (e: IllegalStateException) {
+            Log.e(TAG, "IllegalStateException preparing MediaRecorder: " + e.message)
+            releaseMediaRecorder()
+            return
+        } catch (e: IOException) {
+            Log.e(TAG, "IOException preparing MediaRecorder: " + e.message)
+            releaseMediaRecorder()
+            return
+        }
+    }
+
+    private fun getOutputMediaFile(){
+        val mediaStorageDir = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+            "Camera"
+        )
+        mediaStorageDir.apply {
+            if (!exists()) {
+                if (!mkdirs()) {
+                    Log.e(TAG, "failed to create directory")
+                    return
+                }
+            }
+        }
+
+        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss").format(Date())
+        mediaFile = if(type==1) {
+            File(
+                mediaStorageDir.path + File.separator +
+                        "camera_${timeStamp}.png"
+            )
+        }else{
+            File(
+                mediaStorageDir.path + File.separator +
+                        "camera_video_${timeStamp}.mp4"
+            )
+        }
+    }
+
+
+    @SuppressLint("Range")
+    private fun getMediaUriFromPath(): Uri? {
+        mediaFile?:return null
+        var uri=MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        var selection="${MediaStore.Video.Media.DISPLAY_NAME}= ?"
+        var selectionArgs=arrayOf(mediaFile!!.absolutePath.substring(mediaFile!!.absolutePath.lastIndexOf("/") + 1))
+        var id=MediaStore.Video.Media._ID
+        if (type==1){
+            uri=MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            selection="${MediaStore.Images.Media.DISPLAY_NAME}= ?"
+            id=MediaStore.Images.Media._ID
+        }
+        val cursor: Cursor? = contentResolver.query(uri, null, selection, selectionArgs, null)
+        var mediaUri: Uri? = null
+        cursor?.use {
+            if (cursor.moveToFirst()) {
+                mediaUri = ContentUris.withAppendedId(uri, cursor.getLong(cursor.getColumnIndex(id)))
+            }
+            cursor.close()
+        }
+
+        return mediaUri
+    }
+
 
 
     @SuppressLint("ClickableViewAccessibility")
@@ -212,18 +343,19 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
             mCamera=Camera.open(lensFacing)
             mParameters= mCamera?.parameters
             mParameters?.focusMode = Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE
+            mParameters?.setRotation(getCameraDisplayOrientation())
             mCamera?.parameters=mParameters
             mCamera?.setPreviewCallback(this)
             mCamera?.setPreviewDisplay(mSurfaceHolder)
-            setCameraDisplayOrientation()
+            mCamera?.setDisplayOrientation(getCameraDisplayOrientation())
             mCamera?.startPreview()
         } catch (e: Exception) {
             Log.e(TAG, "打开相机失败${e.message}" )
         }
     }
 
-    private fun setCameraDisplayOrientation(){
-        var info = Camera.CameraInfo()
+    private fun getCameraDisplayOrientation():Int{
+        val info = Camera.CameraInfo()
         Camera.getCameraInfo(lensFacing, info)
         val rotation = windowManager.defaultDisplay.rotation
         var degrees = 0
@@ -241,7 +373,7 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
             result = (info.orientation - degrees + 360) % 360
         }
         Log.e(TAG, "setCameraDisplayOrientation: degrees：" + degrees + "---rotation：" + info.orientation + "---result：" + result)
-        mCamera?.setDisplayOrientation(result)
+        return result
     }
 
     private fun hasCamera(lensFacing: Int): Boolean {
@@ -264,8 +396,16 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         mCamera = null
     }
 
+    private fun releaseMediaRecorder() {
+        mediaRecorder?.reset();   // clear recorder configuration
+        mediaRecorder?.release(); // release the recorder object
+        mediaRecorder = null;
+        mCamera?.lock();
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        releaseMediaRecorder()
         releaseCamera()
     }
 }

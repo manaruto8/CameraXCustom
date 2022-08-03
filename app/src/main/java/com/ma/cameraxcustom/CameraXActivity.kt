@@ -54,11 +54,13 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
     override fun initView() {
         mBinding.ivCamera.setOnClickListener {
             Log.e(TAG, "initView: 拍照" )
+            type=1
             takePicture()
         }
         mBinding.ivCamera.setOnLongClickListener() {
             if(!videoStatus) {
                 Log.e(TAG, "initView: 视频开始" )
+                type=2
                 mBinding.tvTips.visibility=View.VISIBLE
                 startRecording()
             }
@@ -78,6 +80,7 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
             false
         }
         mBinding.ivAlbum.setOnClickListener {
+            type=1
             openAlbum()
         }
         mBinding.ivSwitch.setOnClickListener {
@@ -130,6 +133,7 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
      */
     private fun showResult(uri: Uri?) {
         uri?:return
+        Log.e(TAG, "showResult: $uri||| ${uri.path}" )
         val intent =  Intent(this, ShowResultActivity::class.java)
         intent.putExtra("type",type)
         intent.putExtra("uri",uri.toString())
@@ -162,7 +166,6 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
 
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                     Log.e(TAG, "takePicture.onImageSaved: }" )
-                    type=1
                     showResult(outputFileResults.savedUri)
                 }
             })
@@ -184,9 +187,7 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
     }
 
     private val activityLuncher=registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        //此处是跳转的result回调方法
         if (it.data != null && it.resultCode == Activity.RESULT_OK) {
-            type=1
             showResult(it.data?.data)
         } else {
 
@@ -231,7 +232,6 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
             is VideoRecordEvent.Finalize-> {
                 videoStatus=false
                 Log.e(TAG, "VideoRecordEvent.Finalize" )
-                type=2
                 showResult(event.outputResults.outputUri)
             }
             is VideoRecordEvent.Pause -> {
@@ -271,9 +271,10 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
         //可以自己过滤摄像头替代cameraSelector
         val selector = selectExternalOrBestCamera(cameraProvider)
 
-        //拍照设置
+        //拍照设置  根据设置实际的图片分辨率是最接近的可用分辨率，优先等于或大于然后小于。
         imageCapture = ImageCapture.Builder()
             .setTargetResolution(Size(d.widthPixels,d.heightPixels))//设置相机分辨率
+            //.setTargetAspectRatio() //设置相机宽高比  无法同时设置宽高比和分辨率。会抛出 IllegalArgumentException
             .setTargetRotation(mBinding.cameraPreview.display.rotation)
             .build()
         Log.e(TAG, "bindPreview ${d.widthPixels}---${d.heightPixels}" )
@@ -286,7 +287,6 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
             .setQualitySelector(qualitySelector)
             .build()
         videoCapture = VideoCapture.withOutput(recorder)
-        Log.e(TAG, "bindPreview ${d.widthPixels}---${d.heightPixels}" )
 
         //拍摄旋转角度监听
         val orientationEventListener = object : OrientationEventListener(this) {
@@ -310,6 +310,9 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
         mBinding.ivSwitch.isEnabled = hasBackCamera() && hasFrontCamera()
     }
 
+    /**
+     * 获取摄像头信息
+     */
     @SuppressLint("UnsafeOptInUsageError")
     private fun selectExternalOrBestCamera(provider: ProcessCameraProvider?):CameraSelector? {
         provider?:return null
@@ -317,25 +320,26 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
             Camera2CameraInfo.from(it)
         }.sortedByDescending {
             // HARDWARE_LEVEL is Int type, with the order of:
-            // LEGACY < LIMITED < FULL < LEVEL_3 < EXTERNAL
+            // LEGACY < LIMITED < FULL < LEVEL_3 < EXTERNAL   优先外置摄像头
             it.getCameraCharacteristic(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)
         }
         Log.e(TAG, "selectExternalOrBestCamera:手机有 ${cam2Infos.size}个摄像头" )
         cam2Infos.forEach {
             Log.e(TAG, "selectExternalOrBestCamera:摄像头ID为 ${it.cameraId}" )
-            Log.e(TAG, "selectExternalOrBestCamera:摄像头变焦范围 ${it.getCameraCharacteristic(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)}" )
+            //Log.e(TAG, "selectExternalOrBestCamera:摄像头变焦范围 ${it.getCameraCharacteristic(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)}" )
+            //Log.e(TAG, "selectExternalOrBestCamera:摄像头最大数码变焦倍数 ${it.getCameraCharacteristic(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM)}" )
             // FRONT=0 BACK=1
-            Log.e(TAG, "selectExternalOrBestCamera:摄像头位置 ${it.getCameraCharacteristic(CameraCharacteristics.LENS_FACING)}" )
+            //Log.e(TAG, "selectExternalOrBestCamera:摄像头位置 ${it.getCameraCharacteristic(CameraCharacteristics.LENS_FACING)}" )
             // LEGACY=2 < LIMITED=0 < FULL=1 < LEVEL_3=3       EXTERNAL=4
             // LEGACY（旧版）。这些设备通过 Camera API2 接口为应用提供功能，而且这些功能与通过 Camera API1 接口提供给应用的功能大致相同。旧版框架代码在概念上将 Camera API2 调用转换为 Camera API1 调用；旧版设备不支持 Camera API2 功能，例如每帧控件。
             // LIMITED（有限）。这些设备支持部分（但不是全部）Camera API2 功能，并且必须使用 Camera HAL 3.2 或更高版本。
             // FULL（全面）。这些设备支持 Camera API2 的所有主要功能，并且必须使用 Camera HAL 3.2 或更高版本以及 Android 5.0 或更高版本。
             // LEVEL_3（级别 3）：这些设备支持 YUV 重新处理和 RAW 图片捕获，以及其他输出流配置。
             // EXTERNAL（外部）：这些设备类似于 LIMITED 设备，但有一些例外情况；例如，某些传感器或镜头信息可能未被报告或具有较不稳定的帧速率。此级别用于外部相机（如 USB 网络摄像头）。
-            Log.e(TAG, "selectExternalOrBestCamera:摄像头API的支持级别 ${it.getCameraCharacteristic(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)}" )
+            //Log.e(TAG, "selectExternalOrBestCamera:摄像头API的支持级别 ${it.getCameraCharacteristic(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)}" )
             Log.e(TAG, "selectExternalOrBestCamera:摄像头成像区域的内存大小(最大分辨率) ${it.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)}" )
             Log.e(TAG, "selectExternalOrBestCamera:摄像头是否支持闪光灯 ${it.getCameraCharacteristic(CameraCharacteristics.FLASH_INFO_AVAILABLE)}" )
-            Log.e(TAG, "selectExternalOrBestCamera:摄像头支持的功能 ${it.getCameraCharacteristic(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)}" )
+            //Log.e(TAG, "selectExternalOrBestCamera:摄像头支持的功能 ${it.getCameraCharacteristic(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)}" )
         }
 
         return when {

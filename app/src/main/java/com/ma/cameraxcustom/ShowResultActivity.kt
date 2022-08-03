@@ -35,11 +35,11 @@ class ShowResultActivity : BaseActivity<ActivityShowResultBinding>() {
     }
 
 
-    fun showPhoto(uri:Uri){
+    private fun showPhoto(uri:Uri){
         mBinding.ivPhoto.setImageURI(uri)
     }
 
-    fun showVideo(uri:Uri){
+    private fun showVideo(uri:Uri){
         val mc = MediaController(this)
         mBinding.videoView.apply {
             setVideoURI(uri)

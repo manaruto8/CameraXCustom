@@ -71,12 +71,12 @@
         android:layout_alignParentRight="true"
         />
     <TextView
+        android:visibility="gone"
         android:id="@+id/tv_tips"
         android:layout_width="match_parent"
         android:layout_height="30dp"
         android:background="@color/mask"
         android:text="正在录制"
         android:textColor="@color/white"
-        android:layout_alignParentTop="true"
         android:gravity="center" />
 </RelativeLayout>
