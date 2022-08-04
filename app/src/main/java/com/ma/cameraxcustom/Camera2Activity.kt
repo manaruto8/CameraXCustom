@@ -2,31 +2,39 @@ package com.ma.cameraxcustom
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.graphics.ImageFormat
-import android.graphics.Rect
-import android.hardware.Camera
+import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
-import android.media.ImageReader
-import android.media.MediaRecorder
+import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.SessionConfiguration
+import android.media.*
 import android.net.Uri
-import androidx.appcompat.app.AppCompatActivity
-import android.os.Bundle
-import android.os.Handler
-import android.os.HandlerThread
+import android.os.*
+import android.provider.MediaStore
 import android.util.Log
-import android.view.MotionEvent
-import android.view.Surface
-import android.view.SurfaceHolder
-import android.view.View
+import android.view.*
+import android.view.TextureView.SurfaceTextureListener
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.core.CameraSelector
-import androidx.core.content.ContentProviderCompat.requireContext
+import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.toDrawable
+import androidx.lifecycle.lifecycleScope
 import com.ma.cameraxcustom.databinding.ActivityCamera2Binding
-import java.util.ArrayList
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.*
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.TimeoutException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
@@ -34,26 +42,46 @@ import kotlin.coroutines.suspendCoroutine
 
 class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
 
-    private val cameraManager: CameraManager by lazy {
-        val context = applicationContext
-        context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-    }
-
-    private val characteristics: CameraCharacteristics by lazy {
-        cameraManager.getCameraCharacteristics(cameraId)
-    }
-
+    /** Maximum number of images that will be held in the reader's buffer */
     private val IMAGE_BUFFER_SIZE: Int = 3
-    private var cameraId: String = "0"
-    private var imageReader: ImageReader?=null
+
+    /** Maximum time allowed to wait for the result of an image capture */
+    private val IMAGE_CAPTURE_TIMEOUT_MILLIS: Long = 5000
+
+    /** Milliseconds used for UI animations */
+    private val ANIMATION_FAST_MILLIS = 50L
+
+    private val animationTask: Runnable by lazy {
+        Runnable {
+            // Flash white animation
+            mBinding.overlay.background = Color.argb(150, 255, 255, 255).toDrawable()
+            // Wait for ANIMATION_FAST_MILLIS
+            mBinding.overlay.postDelayed({
+                // Remove white flash animation
+                mBinding.overlay.background = null
+            }, ANIMATION_FAST_MILLIS)
+        }
+    }
+
+    private val IMAGETYPE: Int = ImageFormat.JPEG
+    private val VIDEOTYPE: Int = ImageFormat.NV21
+    private val FRONT_CAMERAID: String = "1"
+    private val BACK_CAMERAID: String = "0"
+
+
+    private lateinit var cameraManager: CameraManager
+    private lateinit var characteristics: CameraCharacteristics
+    private lateinit var imageReader: ImageReader
     private val imageReaderThread = HandlerThread("imageReaderThread").apply { start() }
     private val imageReaderHandler = Handler(imageReaderThread.looper)
-    private var mCamera: CameraDevice?=null
+    private lateinit var mCamera: CameraDevice
+    private lateinit var mSession: CameraCaptureSession
     private val cameraThread = HandlerThread("CameraThread").apply { start() }
     private val cameraHandler = Handler(cameraThread.looper)
-    private var mSession: CameraCaptureSession?=null
+    private var cameraId=BACK_CAMERAID
     private var videoStatus: Boolean = false
     private var type=1
+    private var mediaFile:File?=null
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,12 +96,17 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         mBinding.ivCamera.setOnClickListener {
             Log.e(TAG, "initView: 拍照" )
             type=1
+            takePicture()
         }
         mBinding.ivCamera.setOnLongClickListener {
             if(!videoStatus) {
                 Log.e(TAG, "initView: 视频开始" )
                 type=2
                 mBinding.tvTips.visibility= View.VISIBLE
+                if (mCamera!=null){
+                    mCamera.close()
+                    initCamera()
+                }
             }
             true
         }
@@ -93,9 +126,18 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         }
         mBinding.ivAlbum.setOnClickListener {
             type=1
+            openAlbum()
         }
         mBinding.ivSwitch.setOnClickListener {
-
+            cameraId=if(cameraId==BACK_CAMERAID){
+                FRONT_CAMERAID
+            }else{
+                BACK_CAMERAID
+            }
+            if (mCamera!=null){
+                mCamera.close()
+                initCamera()
+            }
         }
         mBinding.ivFlash.setOnClickListener {
 
@@ -103,7 +145,7 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
 
 
         //监听点击事件进行手动对焦
-        mBinding.surfaceView.setOnTouchListener { _, motionEvent ->
+        mBinding.textureView.setOnTouchListener { _, motionEvent ->
 
             false
         }
@@ -128,53 +170,44 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     }
 
     private fun setHolder(){
-        mBinding.surfaceView.holder.addCallback(object : SurfaceHolder.Callback{
-            override fun surfaceCreated(p0: SurfaceHolder) {
-                Log.e(TAG, "surfaceCreated" )
+//        mBinding.surfaceView.holder.addCallback(object : SurfaceHolder.Callback{
+//            override fun surfaceCreated(p0: SurfaceHolder) {
+//                Log.e(TAG, "surfaceCreated" )
+//                initCamera()
+//            }
+//
+//            override fun surfaceChanged(p0: SurfaceHolder, p1: Int, p2: Int, p3: Int) {
+//                Log.e(TAG, "surfaceChanged" )
+//            }
+//
+//            override fun surfaceDestroyed(p0: SurfaceHolder) {
+//                Log.e(TAG, "surfaceDestroyed" )
+//
+//            }
+//
+//        })
+        mBinding.textureView.surfaceTextureListener= object :SurfaceTextureListener{
+            override fun onSurfaceTextureAvailable(p0: SurfaceTexture, p1: Int, p2: Int) {
+                Log.e(TAG, "onSurfaceTextureAvailable" )
                 initCamera()
             }
 
-            override fun surfaceChanged(p0: SurfaceHolder, p1: Int, p2: Int, p3: Int) {
-                Log.e(TAG, "surfaceChanged" )
+            override fun onSurfaceTextureSizeChanged(p0: SurfaceTexture, p1: Int, p2: Int) {
+                Log.e(TAG, "onSurfaceTextureSizeChanged" )
             }
 
-            override fun surfaceDestroyed(p0: SurfaceHolder) {
-                Log.e(TAG, "surfaceDestroyed" )
-
+            override fun onSurfaceTextureDestroyed(p0: SurfaceTexture): Boolean {
+                Log.e(TAG, "onSurfaceTextureDestroyed" )
+                return false
             }
 
-        })
+            override fun onSurfaceTextureUpdated(p0: SurfaceTexture) {
+                //Log.e(TAG, "onSurfaceTextureUpdated" )
+            }
+
+        }
     }
 
-    @SuppressLint("MissingPermission")
-    private fun initCamera() {
-        enumerateCameras()
-        cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
-            override fun onOpened(device: CameraDevice) {
-                Log.w(TAG, "Camera $cameraId onOpened")
-                mCamera=device
-                openCamera()
-            }
-
-            override fun onDisconnected(device: CameraDevice) {
-                Log.w(TAG, "Camera $cameraId onDisconnected")
-
-            }
-
-            override fun onError(device: CameraDevice, error: Int) {
-                val msg = when (error) {
-                    ERROR_CAMERA_DEVICE -> "Fatal (device)"
-                    ERROR_CAMERA_DISABLED -> "Device policy"
-                    ERROR_CAMERA_IN_USE -> "Camera in use"
-                    ERROR_CAMERA_SERVICE -> "Fatal (service)"
-                    ERROR_MAX_CAMERAS_IN_USE -> "Maximum cameras in use"
-                    else -> "Unknown"
-                }
-                val exc = RuntimeException("Camera $cameraId onError: ($error) $msg")
-                Log.e(TAG, exc.message, exc)
-            }
-        }, imageReaderHandler)
-    }
 
     /**
      * 显示照片或视频
@@ -189,34 +222,208 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     }
 
 
-    private fun openCamera() {
-        val size = characteristics.get(
-            CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
-            .getOutputSizes(ImageFormat.JPEG).maxByOrNull { it.height * it.width }!!
-        imageReader = ImageReader.newInstance(
-            size.width, size.height, ImageFormat.JPEG, IMAGE_BUFFER_SIZE)
+    private fun takePicture() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val buffer = takePhoto().planes[0].buffer
+            val bytes = ByteArray(buffer.remaining()).apply { buffer.get(this) }
+            getOutputMediaFile()
+            FileOutputStream(mediaFile).use { it.write(bytes) }
+            showResult(Uri.fromFile(mediaFile))
+        }
+    }
 
-        val targets = listOf(mBinding.surfaceView.holder.surface, imageReader?.surface)
+    private suspend fun takePhoto(): Image = suspendCoroutine { cont ->
 
-        mCamera?.createCaptureSession(targets, object : CameraCaptureSession.StateCallback() {
+        // Flush any images left in the image reader
+        @Suppress("ControlFlowWithEmptyBody")
+        while (imageReader.acquireNextImage() != null) {
+        }
 
-            override fun onConfigured(session: CameraCaptureSession) {
-                mSession=session
+        // Start a new image queue
+        val imageQueue = ArrayBlockingQueue<Image>(IMAGE_BUFFER_SIZE)
+        imageReader.setOnImageAvailableListener({ reader ->
+            val image = reader.acquireNextImage()
+            Log.e(TAG, "Image available in queue: ${image.timestamp}")
+            imageQueue.add(image)
+        }, imageReaderHandler)
+
+        val captureRequest = mSession.device.createCaptureRequest(
+            CameraDevice.TEMPLATE_STILL_CAPTURE).apply { addTarget(imageReader.surface) }
+        mSession.capture(captureRequest.build(), object : CameraCaptureSession.CaptureCallback() {
+
+            override fun onCaptureStarted(
+                session: CameraCaptureSession,
+                request: CaptureRequest,
+                timestamp: Long,
+                frameNumber: Long) {
+                super.onCaptureStarted(session, request, timestamp, frameNumber)
+                //增加拍照闪烁效果
+                //mBinding.textureView.post(animationTask)
             }
 
-            override fun onConfigureFailed(session: CameraCaptureSession) {
-                val exc = RuntimeException("Camera ${mCamera?.id} session configuration failed")
-                Log.e(TAG, exc.message, exc)
+            override fun onCaptureCompleted(
+                session: CameraCaptureSession,
+                request: CaptureRequest,
+                result: TotalCaptureResult) {
+                super.onCaptureCompleted(session, request, result)
+                val resultTimestamp = result.get(CaptureResult.SENSOR_TIMESTAMP)
+                Log.e(TAG, "Capture result received: $resultTimestamp")
+
+                // Set a timeout in case image captured is dropped from the pipeline
+                val exc = TimeoutException("Image dequeuing took too long")
+                val timeoutRunnable = Runnable { cont.resumeWithException(exc) }
+                imageReaderHandler.postDelayed(timeoutRunnable, IMAGE_CAPTURE_TIMEOUT_MILLIS)
+
+                // Loop in the coroutine's context until an image with matching timestamp comes
+                // We need to launch the coroutine context again because the callback is done in
+                //  the handler provided to the `capture` method, not in our coroutine context
+                @Suppress("BlockingMethodInNonBlockingContext")
+                lifecycleScope.launch(cont.context) {
+                    while (true) {
+
+                        // Dequeue images while timestamps don't match
+                        val image = imageQueue.take()
+                        // TODO(owahltinez): b/142011420
+                        // if (image.timestamp != resultTimestamp) continue
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                            image.format != ImageFormat.DEPTH_JPEG &&
+                            image.timestamp != resultTimestamp) continue
+                        Log.e(TAG, "Matching image dequeued: ${image.timestamp}")
+
+                        // Unset the image reader listener
+                        imageReaderHandler.removeCallbacks(timeoutRunnable)
+                        imageReader.setOnImageAvailableListener(null, null)
+
+                        // Clear the queue of images, if there are left
+                        while (imageQueue.size > 0) {
+                            imageQueue.take().close()
+                        }
+                        cont.resume(image)
+                    }
+                }
             }
         }, cameraHandler)
-
-        val captureRequest = mCamera?.createCaptureRequest(
-            CameraDevice.TEMPLATE_PREVIEW)?.apply { addTarget(mBinding.surfaceView.holder.surface) }
-
-        // This will keep sending the capture request as frequently as possible until the
-        // session is torn down or session.stopRepeating() is called
-        mSession?.setRepeatingRequest(captureRequest!!.build(), null, cameraHandler)
     }
+
+    /**
+     * 打开相册
+     */
+    private fun openAlbum() {
+        val intent = Intent(Intent.ACTION_PICK , MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+        intent.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*")
+
+//        打开文件管理器筛选图片
+//        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+//        intent.addCategory(Intent.CATEGORY_OPENABLE)
+//        intent.type = "image/*"
+
+        activityLuncher.launch(intent)
+    }
+
+    private val activityLuncher=registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (it.data != null && it.resultCode == Activity.RESULT_OK) {
+            showResult(it.data?.data)
+        } else {
+
+        }
+    }
+
+
+    /**
+     * 视频
+     */
+    private fun startRecording() {
+        enumerateCameras()
+        characteristics=cameraManager.getCameraCharacteristics(cameraId)
+        //mCamera=openCamera(cameraManager,cameraId,cameraHandler)
+    }
+
+    private fun getOutputMediaFile(){
+        val mediaStorageDir = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+            "Camera2"
+        )
+        mediaStorageDir.apply {
+            if (!exists()) {
+                if (!mkdirs()) {
+                    Log.e(TAG, "failed to create directory")
+                    return
+                }
+            }
+        }
+
+        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss").format(Date())
+        mediaFile = if(type==1) {
+            File(
+                mediaStorageDir.path + File.separator +
+                        "camera2_${timeStamp}.jpg"
+            )
+        }else{
+            File(
+                mediaStorageDir.path + File.separator +
+                        "camera2_video_${timeStamp}.mp4"
+            )
+        }
+    }
+
+
+
+    @SuppressLint("MissingPermission")
+    private fun initCamera() = lifecycleScope.launch(Dispatchers.Main) {
+        enumerateCameras()
+        characteristics=cameraManager.getCameraCharacteristics(cameraId)
+        mCamera=openCamera(cameraManager,cameraId,cameraHandler)
+
+        if(type==1) {
+            val size = characteristics
+                .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
+                .getOutputSizes(IMAGETYPE).maxByOrNull { it.height * it.width }!!
+            imageReader =
+                ImageReader.newInstance(size.width, size.height, IMAGETYPE, IMAGE_BUFFER_SIZE)
+            //val targets = listOf(mBinding.surfaceView.holder.surface, imageReader.surface)
+            val surface = Surface(mBinding.textureView.surfaceTexture)
+            val targets = listOf(surface, imageReader.surface)
+            mSession = createCaptureSession(mCamera, targets, cameraHandler)
+
+//        val captureRequest = mCamera.createCaptureRequest(
+//            CameraDevice.TEMPLATE_PREVIEW).apply { addTarget(mBinding.surfaceView.holder.surface) }
+            val captureRequest = mCamera.createCaptureRequest(
+                CameraDevice.TEMPLATE_PREVIEW
+            ).apply {
+                addTarget(surface)
+                set(
+                    CaptureRequest.CONTROL_AF_MODE,
+                    CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+                )
+            }
+            mSession.setRepeatingRequest(captureRequest.build(), null, cameraHandler)
+        }else{
+            var fps=30
+            val cameraConfig = characteristics
+                .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
+            cameraConfig.getOutputSizes(MediaRecorder::class.java).forEach { size ->
+                // Get the number of seconds that each frame will take to process
+                val secondsPerFrame =
+                    cameraConfig.getOutputMinFrameDuration(MediaRecorder::class.java, size) /
+                            1_000_000_000.0
+                // Compute the frames per second to let user select a configuration
+                fps = if (secondsPerFrame > 0) (1.0 / secondsPerFrame).toInt() else 0
+            }
+        }
+    }
+
+//    private fun createRecorder(surface: Surface) = MediaRecorder().apply {
+//        setAudioSource(MediaRecorder.AudioSource.MIC)
+//        setVideoSource(MediaRecorder.VideoSource.SURFACE)
+//        setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+//        setOutputFile(outputFile.absolutePath)
+//        setVideoEncodingBitRate(RECORDER_VIDEO_BITRATE)
+//        if (args.fps > 0) setVideoFrameRate(args.fps)
+//        setVideoSize(args.width, args.height)
+//        setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+//        setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+//        setInputSurface(surface)
+//    }
 
     private suspend fun createCaptureSession(
         device: CameraDevice,
@@ -224,13 +431,9 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         handler: Handler? = null
     ): CameraCaptureSession = suspendCoroutine { cont ->
 
-        // Create a capture session using the predefined targets; this also involves defining the
-        // session state callback to be notified of when the session is ready
         device.createCaptureSession(targets, object : CameraCaptureSession.StateCallback() {
 
-            override fun onConfigured(session: CameraCaptureSession) {
-
-            }
+            override fun onConfigured(session: CameraCaptureSession) = cont.resume(session)
 
             override fun onConfigureFailed(session: CameraCaptureSession) {
                 val exc = RuntimeException("Camera ${device.id} session configuration failed")
@@ -241,10 +444,41 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     }
 
 
+    @SuppressLint("MissingPermission")
+    private suspend fun openCamera(
+        manager: CameraManager,
+        cameraId: String,
+        handler: Handler? = null
+    ): CameraDevice = suspendCancellableCoroutine { cont ->
+
+        manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
+            override fun onOpened(device: CameraDevice) = cont.resume(device)
+
+            override fun onDisconnected(device: CameraDevice) {
+                Log.e(TAG, "Camera $cameraId onDisconnected")
+                finish()
+            }
+
+            override fun onError(device: CameraDevice, error: Int) {
+                val msg = when (error) {
+                    ERROR_CAMERA_DEVICE -> "Fatal (device)"
+                    ERROR_CAMERA_DISABLED -> "Device policy"
+                    ERROR_CAMERA_IN_USE -> "Camera in use"
+                    ERROR_CAMERA_SERVICE -> "Fatal (service)"
+                    ERROR_MAX_CAMERAS_IN_USE -> "Maximum cameras in use"
+                    else -> "Unknown"
+                }
+                val exc = RuntimeException("Camera $cameraId onError: ($error) $msg")
+                Log.e(TAG, exc.message, exc)
+                if (cont.isActive) cont.resumeWithException(exc)
+            }
+        }, handler)
+    }
+
 
     @SuppressLint("InlinedApi")
     private fun enumerateCameras() {
-
+        cameraManager=getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val cameraIds = cameraManager.cameraIdList.filter {
             val characteristics = cameraManager.getCameraCharacteristics(it)
             val capabilities = characteristics.get(
@@ -260,17 +494,46 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
             //Log.e(TAG, "enumerateCameras:摄像头变焦范围 ${characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)}" )
             //Log.e(TAG, "enumerateCameras:摄像头最大数码变焦倍数 ${characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM)}" )
             // FRONT=0 BACK=1
-            //Log.e(TAG, "enumerateCameras:摄像头位置 ${characteristics.get(CameraCharacteristics.LENS_FACING)}" )
+            Log.e(TAG, "enumerateCameras:摄像头位置 ${lensFacing(characteristics.get(CameraCharacteristics.LENS_FACING)!!)}" )
             // LEGACY=2 < LIMITED=0 < FULL=1 < LEVEL_3=3       EXTERNAL=4
             // LEGACY（旧版）。这些设备通过 Camera API2 接口为应用提供功能，而且这些功能与通过 Camera API1 接口提供给应用的功能大致相同。旧版框架代码在概念上将 Camera API2 调用转换为 Camera API1 调用；旧版设备不支持 Camera API2 功能，例如每帧控件。
             // LIMITED（有限）。这些设备支持部分（但不是全部）Camera API2 功能，并且必须使用 Camera HAL 3.2 或更高版本。
             // FULL（全面）。这些设备支持 Camera API2 的所有主要功能，并且必须使用 Camera HAL 3.2 或更高版本以及 Android 5.0 或更高版本。
             // LEVEL_3（级别 3）：这些设备支持 YUV 重新处理和 RAW 图片捕获，以及其他输出流配置。
             // EXTERNAL（外部）：这些设备类似于 LIMITED 设备，但有一些例外情况；例如，某些传感器或镜头信息可能未被报告或具有较不稳定的帧速率。此级别用于外部相机（如 USB 网络摄像头）。
-            //Log.e(TAG, "enumerateCameras:摄像头API的支持级别 ${characteristicscharacteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)}" )
+            Log.e(TAG, "enumerateCameras:摄像头API的支持级别 ${supportedHardwareLevel(characteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)!!)}" )
             Log.e(TAG, "enumerateCameras:摄像头成像区域的内存大小(最大分辨率) ${characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)}" )
             Log.e(TAG, "enumerateCameras:摄像头是否支持闪光灯 ${characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE)}" )
             //Log.e(TAG, "enumerateCameras:摄像头支持的功能 ${characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)}" )
         }
+    }
+
+    private fun lensFacing(value: Int) = when(value) {
+        CameraCharacteristics.LENS_FACING_BACK -> "后置"
+        CameraCharacteristics.LENS_FACING_FRONT -> "前置"
+        CameraCharacteristics.LENS_FACING_EXTERNAL -> "额外"
+        else -> "未知"
+    }
+
+    private fun supportedHardwareLevel(value: Int) = when(value) {
+        CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY -> "LEGACY（旧版）"
+        CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED -> "LIMITED（有限）"
+        CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_FULL -> "FULL（全面）"
+        CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_3 -> "LEVEL_3（级别 3）"
+        CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_EXTERNAL -> "EXTERNAL（外部）"
+        else -> "未知"
+    }
+
+
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            mCamera.close()
+        } catch (exc: Throwable) {
+            Log.e(TAG, "Error closing camera", exc)
+        }
+        cameraThread.quitSafely()
+        imageReaderThread.quitSafely()
     }
 }

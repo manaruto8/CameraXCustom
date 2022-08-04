@@ -4,19 +4,13 @@ package com.ma.cameraxcustom
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
-import android.content.ContentUris
-import android.content.ContentValues
-import android.content.Context
 import android.content.Intent
-import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
-import android.database.Cursor
 import android.graphics.Rect
 import android.hardware.Camera
 import android.media.CamcorderProfile
 import android.media.MediaRecorder
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
@@ -39,11 +33,12 @@ import java.util.*
 class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallback,Camera.PictureCallback,Camera.AutoFocusCallback {
 
     private var lensFacing: Int = Camera.CameraInfo.CAMERA_FACING_BACK
-    private var mCamera: Camera? = null
-    private var mParameters: Camera.Parameters? = null
+    private var flashMode: String =  Camera.Parameters.FLASH_MODE_OFF
     private lateinit var mSurfaceHolder: SurfaceHolder
+    private lateinit var mCamera: Camera
+    private lateinit var mParameters: Camera.Parameters
+    private lateinit var mediaRecorder:MediaRecorder
     private var videoStatus: Boolean = false
-    private var mediaRecorder:MediaRecorder?=null
     private var type=1
     private var mediaFile:File?=null
 
@@ -59,7 +54,7 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         mBinding.ivCamera.setOnClickListener {
             Log.e(TAG, "initView: 拍照" )
             type=1
-            mCamera?.takePicture(null,null,this)
+            mCamera.takePicture(null,null,this)
         }
         mBinding.ivCamera.setOnLongClickListener {
             if(!videoStatus) {
@@ -76,7 +71,7 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
                     if(videoStatus){
                         Log.e(TAG, "initView: 视频停止" )
                         mBinding.tvTips.visibility=View.GONE
-                        mediaRecorder?.stop()  // stop the recording
+                        mediaRecorder.stop()  // stop the recording
                         releaseMediaRecorder() // release the MediaRecorder object
                         videoStatus=false
                         showResult(Uri.fromFile(mediaFile))
@@ -100,7 +95,14 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
             openCamera()
         }
         mBinding.ivFlash.setOnClickListener {
-
+            flashMode = if(flashMode==Camera.Parameters.FLASH_MODE_OFF){
+                Camera.Parameters.FLASH_MODE_TORCH
+            }else{
+                Camera.Parameters.FLASH_MODE_OFF
+            }
+            mParameters=mCamera.parameters
+            mParameters.flashMode=flashMode
+            mCamera.parameters=mParameters
         }
 
 
@@ -120,18 +122,18 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
             val cameraArea = Camera.Area(focusArea, 1000)
             val meteringAreas: MutableList<Camera.Area> = ArrayList()
             val focusAreas: MutableList<Camera.Area> = ArrayList()
-            if (mParameters!!.maxNumMeteringAreas > 0) {
+            if (mParameters.maxNumMeteringAreas > 0) {
                 meteringAreas.add(cameraArea)
                 focusAreas.add(cameraArea)
             }
-            mParameters?.focusMode = Camera.Parameters.FOCUS_MODE_AUTO // 设置对焦模式
-            mParameters?.focusAreas = focusAreas // 设置对焦区域
-            mParameters?.meteringAreas = meteringAreas // 设置测光区域
+            mParameters.focusMode = Camera.Parameters.FOCUS_MODE_AUTO // 设置对焦模式
+            mParameters.focusAreas = focusAreas // 设置对焦区域
+            mParameters.meteringAreas = meteringAreas // 设置测光区域
 
             try {
-                mCamera?.cancelAutoFocus() // 每次对焦前，需要先取消对焦
-                mCamera?.parameters = mParameters // 设置相机参数
-                mCamera?.autoFocus(this) // 开启对焦
+                mCamera.cancelAutoFocus() // 每次对焦前，需要先取消对焦
+                mCamera.parameters = mParameters // 设置相机参数
+                mCamera.autoFocus(this) // 开启对焦
             } catch (e:Exception) {
             }
             false
@@ -248,27 +250,27 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         mediaRecorder = MediaRecorder()
 
         // Step 1: Unlock and set camera to MediaRecorder
-        mCamera?.unlock()
-        mediaRecorder?.setCamera(mCamera)
+        mCamera.unlock()
+        mediaRecorder.setCamera(mCamera)
 
         // Step 2: Set sources
-        mediaRecorder?.setAudioSource(MediaRecorder.AudioSource.CAMCORDER)
-        mediaRecorder?.setVideoSource(MediaRecorder.VideoSource.CAMERA)
+        mediaRecorder.setAudioSource(MediaRecorder.AudioSource.CAMCORDER)
+        mediaRecorder.setVideoSource(MediaRecorder.VideoSource.CAMERA)
 
         // Step 3: Set a CamcorderProfile (requires API Level 8 or higher)
-        mediaRecorder?.setProfile(CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH))
+        mediaRecorder.setProfile(CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH))
 
         // Step 4: Set output file
-        mediaRecorder?.setOutputFile(mediaFile?.absolutePath)
+        mediaRecorder.setOutputFile(mediaFile?.absolutePath)
 
-        mediaRecorder?.setOrientationHint(getCameraDisplayOrientation())
+        mediaRecorder.setOrientationHint(getCameraDisplayOrientation())
         // Step 5: Set the preview output
-        mediaRecorder?.setPreviewDisplay(mBinding.surfaceView.holder.surface)
+        mediaRecorder.setPreviewDisplay(mBinding.surfaceView.holder.surface)
 
         // Step 6: Prepare configured MediaRecorder
         try {
-            mediaRecorder?.prepare()
-            mediaRecorder?.start()
+            mediaRecorder.prepare()
+            mediaRecorder.start()
             videoStatus=true
         } catch (e: IllegalStateException) {
             Log.e(TAG, "IllegalStateException preparing MediaRecorder: " + e.message)
@@ -299,7 +301,7 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         mediaFile = if(type==1) {
             File(
                 mediaStorageDir.path + File.separator +
-                        "camera_${timeStamp}.png"
+                        "camera_${timeStamp}.jpg"
             )
         }else{
             File(
@@ -310,45 +312,20 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
     }
 
 
-    @SuppressLint("Range")
-    private fun getMediaUriFromPath(): Uri? {
-        mediaFile?:return null
-        var uri=MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        var selection="${MediaStore.Video.Media.DISPLAY_NAME}= ?"
-        var selectionArgs=arrayOf(mediaFile!!.absolutePath.substring(mediaFile!!.absolutePath.lastIndexOf("/") + 1))
-        var id=MediaStore.Video.Media._ID
-        if (type==1){
-            uri=MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-            selection="${MediaStore.Images.Media.DISPLAY_NAME}= ?"
-            id=MediaStore.Images.Media._ID
-        }
-        val cursor: Cursor? = contentResolver.query(uri, null, selection, selectionArgs, null)
-        var mediaUri: Uri? = null
-        cursor?.use {
-            if (cursor.moveToFirst()) {
-                mediaUri = ContentUris.withAppendedId(uri, cursor.getLong(cursor.getColumnIndex(id)))
-            }
-            cursor.close()
-        }
-
-        return mediaUri
-    }
-
-
 
     @SuppressLint("ClickableViewAccessibility")
     private fun openCamera() {
         if (!hasCamera(lensFacing)) return
         try {
             mCamera=Camera.open(lensFacing)
-            mParameters= mCamera?.parameters
-            mParameters?.focusMode = Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE
-            mParameters?.setRotation(getCameraDisplayOrientation())
-            mCamera?.parameters=mParameters
-            mCamera?.setPreviewCallback(this)
-            mCamera?.setPreviewDisplay(mSurfaceHolder)
-            mCamera?.setDisplayOrientation(getCameraDisplayOrientation())
-            mCamera?.startPreview()
+            mParameters= mCamera.parameters
+            mParameters.focusMode = Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE
+            mParameters.setRotation(getCameraDisplayOrientation())
+            mCamera.parameters=mParameters
+            mCamera.setPreviewCallback(this)
+            mCamera.setPreviewDisplay(mSurfaceHolder)
+            mCamera.setDisplayOrientation(getCameraDisplayOrientation())
+            mCamera.startPreview()
         } catch (e: Exception) {
             Log.e(TAG, "打开相机失败${e.message}" )
         }
@@ -390,17 +367,15 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
     }
 
     private fun releaseCamera() {
-        mCamera?.setPreviewCallback(null);
-        mCamera?.stopPreview();
-        mCamera?.release()
-        mCamera = null
+        mCamera.setPreviewCallback(null);
+        mCamera.stopPreview();
+        mCamera.release()
     }
 
     private fun releaseMediaRecorder() {
-        mediaRecorder?.reset();   // clear recorder configuration
-        mediaRecorder?.release(); // release the recorder object
-        mediaRecorder = null;
-        mCamera?.lock();
+        mediaRecorder.reset();   // clear recorder configuration
+        mediaRecorder.release(); // release the recorder object
+        mCamera.lock();
     }
 
     override fun onDestroy() {

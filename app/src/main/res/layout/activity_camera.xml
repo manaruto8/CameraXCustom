@@ -62,7 +62,7 @@
         android:layout_alignRight="@id/tv_switch"
         />
     <ImageView
-        android:visibility="gone"
+
         android:id="@+id/iv_flash"
         android:layout_width="60dp"
         android:layout_height="60dp"

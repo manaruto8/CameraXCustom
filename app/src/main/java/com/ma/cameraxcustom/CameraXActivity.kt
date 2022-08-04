@@ -329,14 +329,14 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
             //Log.e(TAG, "selectExternalOrBestCamera:摄像头变焦范围 ${it.getCameraCharacteristic(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)}" )
             //Log.e(TAG, "selectExternalOrBestCamera:摄像头最大数码变焦倍数 ${it.getCameraCharacteristic(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM)}" )
             // FRONT=0 BACK=1
-            //Log.e(TAG, "selectExternalOrBestCamera:摄像头位置 ${it.getCameraCharacteristic(CameraCharacteristics.LENS_FACING)}" )
+            Log.e(TAG, "selectExternalOrBestCamera:摄像头位置 ${lensFacing(it.getCameraCharacteristic(CameraCharacteristics.LENS_FACING)!!)}" )
             // LEGACY=2 < LIMITED=0 < FULL=1 < LEVEL_3=3       EXTERNAL=4
             // LEGACY（旧版）。这些设备通过 Camera API2 接口为应用提供功能，而且这些功能与通过 Camera API1 接口提供给应用的功能大致相同。旧版框架代码在概念上将 Camera API2 调用转换为 Camera API1 调用；旧版设备不支持 Camera API2 功能，例如每帧控件。
             // LIMITED（有限）。这些设备支持部分（但不是全部）Camera API2 功能，并且必须使用 Camera HAL 3.2 或更高版本。
             // FULL（全面）。这些设备支持 Camera API2 的所有主要功能，并且必须使用 Camera HAL 3.2 或更高版本以及 Android 5.0 或更高版本。
             // LEVEL_3（级别 3）：这些设备支持 YUV 重新处理和 RAW 图片捕获，以及其他输出流配置。
             // EXTERNAL（外部）：这些设备类似于 LIMITED 设备，但有一些例外情况；例如，某些传感器或镜头信息可能未被报告或具有较不稳定的帧速率。此级别用于外部相机（如 USB 网络摄像头）。
-            //Log.e(TAG, "selectExternalOrBestCamera:摄像头API的支持级别 ${it.getCameraCharacteristic(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)}" )
+            Log.e(TAG, "selectExternalOrBestCamera:摄像头API的支持级别 ${supportedHardwareLevel(it.getCameraCharacteristic(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)!!)}" )
             Log.e(TAG, "selectExternalOrBestCamera:摄像头成像区域的内存大小(最大分辨率) ${it.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)}" )
             Log.e(TAG, "selectExternalOrBestCamera:摄像头是否支持闪光灯 ${it.getCameraCharacteristic(CameraCharacteristics.FLASH_INFO_AVAILABLE)}" )
             //Log.e(TAG, "selectExternalOrBestCamera:摄像头支持的功能 ${it.getCameraCharacteristic(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)}" )
@@ -365,4 +365,19 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
         return cameraProvider?.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA) ?: false
     }
 
+    private fun lensFacing(value: Int) = when(value) {
+        CameraCharacteristics.LENS_FACING_BACK -> "后置"
+        CameraCharacteristics.LENS_FACING_FRONT -> "前置"
+        CameraCharacteristics.LENS_FACING_EXTERNAL -> "额外"
+        else -> "未知"
+    }
+
+    private fun supportedHardwareLevel(value: Int) = when(value) {
+        CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY -> "LEGACY（旧版）"
+        CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED -> "LIMITED（有限）"
+        CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_FULL -> "FULL（全面）"
+        CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_3 -> "LEVEL_3（级别 3）"
+        CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_EXTERNAL -> "EXTERNAL（外部）"
+        else -> "未知"
+    }
 }
