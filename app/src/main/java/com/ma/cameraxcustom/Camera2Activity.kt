@@ -5,22 +5,22 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
-import android.hardware.camera2.params.OutputConfiguration
-import android.hardware.camera2.params.SessionConfiguration
 import android.media.*
 import android.net.Uri
 import android.os.*
 import android.provider.MediaStore
 import android.util.Log
+import android.util.Range
+import android.util.Size
 import android.view.*
 import android.view.TextureView.SurfaceTextureListener
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toDrawable
 import androidx.lifecycle.lifecycleScope
@@ -30,7 +30,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import java.io.FileOutputStream
-import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ArrayBlockingQueue
@@ -38,6 +37,7 @@ import java.util.concurrent.TimeoutException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
+import kotlin.math.abs
 
 
 class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
@@ -51,22 +51,21 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     /** Milliseconds used for UI animations */
     private val ANIMATION_FAST_MILLIS = 50L
 
+    private val VIDEO_MIME_TYPE = "video/avc"
+    private val AUDIO_MIME_TYPE = "audio/mp4a-latm"
+
     private val animationTask: Runnable by lazy {
         Runnable {
-            // Flash white animation
             mBinding.overlay.background = Color.argb(150, 255, 255, 255).toDrawable()
-            // Wait for ANIMATION_FAST_MILLIS
             mBinding.overlay.postDelayed({
-                // Remove white flash animation
                 mBinding.overlay.background = null
             }, ANIMATION_FAST_MILLIS)
         }
     }
 
-    private val IMAGETYPE: Int = ImageFormat.JPEG
-    private val VIDEOTYPE: Int = ImageFormat.NV21
     private val FRONT_CAMERAID: String = "1"
     private val BACK_CAMERAID: String = "0"
+    private val RECORDER_VIDEO_BITRATE: Int = 10_000_000
 
 
     private lateinit var cameraManager: CameraManager
@@ -78,10 +77,13 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     private lateinit var mSession: CameraCaptureSession
     private val cameraThread = HandlerThread("CameraThread").apply { start() }
     private val cameraHandler = Handler(cameraThread.looper)
+    private lateinit var  mediaSurface:Surface
+    private lateinit var mediaRecorder:MediaRecorder
     private var cameraId=BACK_CAMERAID
     private var videoStatus: Boolean = false
     private var type=1
     private var mediaFile:File?=null
+    private var relative:Int=0
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -103,10 +105,7 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
                 Log.e(TAG, "initView: 视频开始" )
                 type=2
                 mBinding.tvTips.visibility= View.VISIBLE
-                if (mCamera!=null){
-                    mCamera.close()
-                    initCamera()
-                }
+                startRecording()
             }
             true
         }
@@ -117,7 +116,9 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
                         Log.e(TAG, "initView: 视频停止" )
                         mBinding.tvTips.visibility= View.GONE
                         videoStatus=false
-
+                        mediaRecorder.stop()
+                        releaseMediaRecorder()
+                        showResult(Uri.fromFile(mediaFile))
                     }
                 }
 
@@ -129,6 +130,7 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
             openAlbum()
         }
         mBinding.ivSwitch.setOnClickListener {
+            releaseCamera()
             cameraId=if(cameraId==BACK_CAMERAID){
                 FRONT_CAMERAID
             }else{
@@ -198,6 +200,7 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
 
             override fun onSurfaceTextureDestroyed(p0: SurfaceTexture): Boolean {
                 Log.e(TAG, "onSurfaceTextureDestroyed" )
+                releaseCamera()
                 return false
             }
 
@@ -222,24 +225,30 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     }
 
 
+    /**
+     * 拍照
+     */
     private fun takePicture() {
         lifecycleScope.launch(Dispatchers.IO) {
             val buffer = takePhoto().planes[0].buffer
             val bytes = ByteArray(buffer.remaining()).apply { buffer.get(this) }
             getOutputMediaFile()
             FileOutputStream(mediaFile).use { it.write(bytes) }
+            val mirrored = characteristics.get(CameraCharacteristics.LENS_FACING) ==
+                    CameraCharacteristics.LENS_FACING_FRONT
+            val exifOrientation = computeExifOrientation(relative, mirrored)
+            val exif = ExifInterface(mediaFile!!.absolutePath)
+            exif.setAttribute(
+                ExifInterface.TAG_ORIENTATION, exifOrientation.toString())
+            exif.saveAttributes()
             showResult(Uri.fromFile(mediaFile))
         }
     }
 
     private suspend fun takePhoto(): Image = suspendCoroutine { cont ->
 
-        // Flush any images left in the image reader
         @Suppress("ControlFlowWithEmptyBody")
-        while (imageReader.acquireNextImage() != null) {
-        }
-
-        // Start a new image queue
+        while (imageReader.acquireNextImage() != null) { }
         val imageQueue = ArrayBlockingQueue<Image>(IMAGE_BUFFER_SIZE)
         imageReader.setOnImageAvailableListener({ reader ->
             val image = reader.acquireNextImage()
@@ -266,35 +275,24 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
                 request: CaptureRequest,
                 result: TotalCaptureResult) {
                 super.onCaptureCompleted(session, request, result)
+
                 val resultTimestamp = result.get(CaptureResult.SENSOR_TIMESTAMP)
                 Log.e(TAG, "Capture result received: $resultTimestamp")
-
-                // Set a timeout in case image captured is dropped from the pipeline
                 val exc = TimeoutException("Image dequeuing took too long")
                 val timeoutRunnable = Runnable { cont.resumeWithException(exc) }
                 imageReaderHandler.postDelayed(timeoutRunnable, IMAGE_CAPTURE_TIMEOUT_MILLIS)
 
-                // Loop in the coroutine's context until an image with matching timestamp comes
-                // We need to launch the coroutine context again because the callback is done in
-                //  the handler provided to the `capture` method, not in our coroutine context
                 @Suppress("BlockingMethodInNonBlockingContext")
                 lifecycleScope.launch(cont.context) {
                     while (true) {
-
-                        // Dequeue images while timestamps don't match
                         val image = imageQueue.take()
                         // TODO(owahltinez): b/142011420
-                        // if (image.timestamp != resultTimestamp) continue
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
                             image.format != ImageFormat.DEPTH_JPEG &&
                             image.timestamp != resultTimestamp) continue
                         Log.e(TAG, "Matching image dequeued: ${image.timestamp}")
-
-                        // Unset the image reader listener
                         imageReaderHandler.removeCallbacks(timeoutRunnable)
                         imageReader.setOnImageAvailableListener(null, null)
-
-                        // Clear the queue of images, if there are left
                         while (imageQueue.size > 0) {
                             imageQueue.take().close()
                         }
@@ -330,14 +328,72 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
 
 
     /**
-     * 视频
+     * 录制视频
      */
-    private fun startRecording() {
-        enumerateCameras()
-        characteristics=cameraManager.getCameraCharacteristics(cameraId)
-        //mCamera=openCamera(cameraManager,cameraId,cameraHandler)
+    private fun startRecording()= lifecycleScope.launch(Dispatchers.Main) {
+
+        val cameraConfig = characteristics
+            .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
+        val mediaSize =cameraConfig
+            .getOutputSizes(MediaRecorder::class.java)
+            .maxByOrNull { it.height * it.width }!!
+        val secondsPerFrame =
+            cameraConfig.getOutputMinFrameDuration(MediaRecorder::class.java, mediaSize) / 1_000_000_000.0
+        val mediaFps= if (secondsPerFrame > 0) (1.0 / secondsPerFrame).toInt() else 0
+        cameraConfig.getOutputSizes(MediaRecorder::class.java).forEach { size ->
+            val secondsFrame =
+                cameraConfig.getOutputMinFrameDuration(MediaRecorder::class.java, size) / 1_000_000_000.0
+            val fps= if (secondsFrame > 0) (1.0 / secondsPerFrame).toInt() else 0
+            Log.e(TAG, "startRecording:支持的录制尺寸 ${size.width}* ${size.height}，帧率为 $fps Fps" )
+        }
+        mediaSurface= if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            MediaCodec.createPersistentInputSurface()
+        } else {
+            val mediaCodec=MediaCodec.createDecoderByType(VIDEO_MIME_TYPE)
+            mediaCodec.createInputSurface()
+        }
+        Log.e(TAG, "startRecording:设置的录制尺寸 ${mediaSize.width}* ${mediaSize.height}，帧率为 $mediaFps Fps" )
+        mediaRecorder=createRecorder(mediaSurface,mediaFps,mediaSize)
+        val surface = Surface(mBinding.textureView.surfaceTexture)
+        val targets = listOf(surface, mediaSurface)
+        mSession = createCaptureSession(mCamera, targets, cameraHandler)
+
+        val captureRequest = mCamera.createCaptureRequest(
+            CameraDevice.TEMPLATE_PREVIEW
+        ).apply {
+            addTarget(surface)
+            addTarget(mediaSurface)
+            set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(mediaFps, mediaFps))
+        }
+        mSession.setRepeatingRequest(captureRequest.build(), null, cameraHandler)
+        mediaRecorder.start()
+        videoStatus=true
     }
 
+    private fun createRecorder(surface: Surface, mediaFps:Int, mediaSize:  Size) = MediaRecorder(this).apply {
+        getOutputMediaFile()
+        setAudioSource(MediaRecorder.AudioSource.MIC)
+        setVideoSource(MediaRecorder.VideoSource.SURFACE)
+        setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+        setOutputFile(mediaFile?.absolutePath)
+        setVideoEncodingBitRate(RECORDER_VIDEO_BITRATE)
+        if (mediaFps > 0) setVideoFrameRate(mediaFps)
+        setVideoSize(mediaSize.width, mediaSize.height)
+        setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+        setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+        setOrientationHint(relative)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            setInputSurface(surface)
+        }else{
+            setPreviewDisplay(surface)
+        }
+        prepare()
+    }
+
+
+    /**
+     * 设置保存位置
+     */
     private fun getOutputMediaFile(){
         val mediaStorageDir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
@@ -367,64 +423,74 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     }
 
 
-
+    /**
+     * 初始化相机
+     */
     @SuppressLint("MissingPermission")
     private fun initCamera() = lifecycleScope.launch(Dispatchers.Main) {
         enumerateCameras()
         characteristics=cameraManager.getCameraCharacteristics(cameraId)
         mCamera=openCamera(cameraManager,cameraId,cameraHandler)
 
-        if(type==1) {
-            val size = characteristics
-                .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
-                .getOutputSizes(IMAGETYPE).maxByOrNull { it.height * it.width }!!
-            imageReader =
-                ImageReader.newInstance(size.width, size.height, IMAGETYPE, IMAGE_BUFFER_SIZE)
-            //val targets = listOf(mBinding.surfaceView.holder.surface, imageReader.surface)
-            val surface = Surface(mBinding.textureView.surfaceTexture)
-            val targets = listOf(surface, imageReader.surface)
-            mSession = createCaptureSession(mCamera, targets, cameraHandler)
-
-//        val captureRequest = mCamera.createCaptureRequest(
-//            CameraDevice.TEMPLATE_PREVIEW).apply { addTarget(mBinding.surfaceView.holder.surface) }
-            val captureRequest = mCamera.createCaptureRequest(
-                CameraDevice.TEMPLATE_PREVIEW
-            ).apply {
-                addTarget(surface)
-                set(
-                    CaptureRequest.CONTROL_AF_MODE,
-                    CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
-                )
-            }
-            mSession.setRepeatingRequest(captureRequest.build(), null, cameraHandler)
-        }else{
-            var fps=30
-            val cameraConfig = characteristics
-                .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
-            cameraConfig.getOutputSizes(MediaRecorder::class.java).forEach { size ->
-                // Get the number of seconds that each frame will take to process
-                val secondsPerFrame =
-                    cameraConfig.getOutputMinFrameDuration(MediaRecorder::class.java, size) /
-                            1_000_000_000.0
-                // Compute the frames per second to let user select a configuration
-                fps = if (secondsPerFrame > 0) (1.0 / secondsPerFrame).toInt() else 0
+        val orientationEventListener = object : OrientationEventListener(applicationContext) {
+            override fun onOrientationChanged(orientation: Int) {
+                val rotation = when {
+                    orientation <= 45 -> Surface.ROTATION_0
+                    orientation <= 135 -> Surface.ROTATION_90
+                    orientation <= 225 -> Surface.ROTATION_180
+                    orientation <= 315 -> Surface.ROTATION_270
+                    else -> Surface.ROTATION_0
+                }
+                relative = computeRelativeRotation(characteristics, rotation)
             }
         }
+        orientationEventListener.enable()
+
+        val cameraConfig = characteristics
+            .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
+        var size=cameraConfig
+            .getOutputSizes(ImageFormat.JPEG)
+            .maxByOrNull { it.height * it.width }!!
+        var diff= 10.0
+        cameraConfig.getOutputSizes(ImageFormat.JPEG).forEach{
+                val value= abs(mBinding.textureView.height.toDouble()/mBinding.textureView.width - it.height /it.width)
+                if(diff>value){
+                    diff=value
+                    size= Size(it.height ,it.width)
+                }
+            }
+        imageReader =
+            ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, IMAGE_BUFFER_SIZE)
+        Log.e(TAG, "initCamera:设置的拍照尺寸 ${size.width}* ${size.height}" )
+        //val targets = listOf(mBinding.surfaceView.holder.surface, imageReader.surface)
+        val surface = Surface(mBinding.textureView.surfaceTexture)
+        val targets = listOf(surface, imageReader.surface)
+        mSession = createCaptureSession(mCamera, targets, cameraHandler)
+
+//        TEMPLATE_PREVIEW：创建预览的请求
+//        TEMPLATE_STILL_CAPTURE：创建一个适合于静态图像捕获的请求，图像质量优先于帧速率。
+//        TEMPLATE_RECORD：创建视频录制的请求
+//        TEMPLATE_VIDEO_SNAPSHOT：创建视视频录制时截屏的请求
+//        TEMPLATE_ZERO_SHUTTER_LAG：创建一个适用于零快门延迟的请求。在不影响预览帧率的情况下最大化图像质量。
+//        TEMPLATE_MANUAL：创建一个基本捕获请求，这种请求中所有的自动控制都是禁用的(自动曝光，自动白平衡、自动焦点)。
+//        val captureRequest = mCamera.createCaptureRequest(
+//            CameraDevice.TEMPLATE_PREVIEW).apply { addTarget(mBinding.surfaceView.holder.surface) }
+        val captureRequest = mCamera.createCaptureRequest(
+            CameraDevice.TEMPLATE_PREVIEW
+        ).apply {
+            addTarget(surface)
+            set(
+                CaptureRequest.CONTROL_AF_MODE,
+                CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+            )
+        }
+        mSession.setRepeatingRequest(captureRequest.build(), null, cameraHandler)
     }
 
-//    private fun createRecorder(surface: Surface) = MediaRecorder().apply {
-//        setAudioSource(MediaRecorder.AudioSource.MIC)
-//        setVideoSource(MediaRecorder.VideoSource.SURFACE)
-//        setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-//        setOutputFile(outputFile.absolutePath)
-//        setVideoEncodingBitRate(RECORDER_VIDEO_BITRATE)
-//        if (args.fps > 0) setVideoFrameRate(args.fps)
-//        setVideoSize(args.width, args.height)
-//        setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-//        setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-//        setInputSurface(surface)
-//    }
 
+    /**
+     * 获取相机控制类
+     */
     private suspend fun createCaptureSession(
         device: CameraDevice,
         targets: List<Surface>,
@@ -444,6 +510,9 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     }
 
 
+    /**
+     * 获取相机管理器
+     */
     @SuppressLint("MissingPermission")
     private suspend fun openCamera(
         manager: CameraManager,
@@ -476,6 +545,9 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     }
 
 
+    /**
+     * 获取相机ID  也可在此设置需要的ID
+     */
     @SuppressLint("InlinedApi")
     private fun enumerateCameras() {
         cameraManager=getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -524,10 +596,41 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         else -> "未知"
     }
 
+    private fun computeRelativeRotation(
+        characteristics: CameraCharacteristics,
+        surfaceRotation: Int
+    ): Int {
+        val sensorOrientationDegrees =
+            characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION)!!
 
+        val deviceOrientationDegrees = when (surfaceRotation) {
+            Surface.ROTATION_0 -> 0
+            Surface.ROTATION_90 -> 90
+            Surface.ROTATION_180 -> 180
+            Surface.ROTATION_270 -> 270
+            else -> 0
+        }
 
-    override fun onDestroy() {
-        super.onDestroy()
+        val sign = if (characteristics.get(CameraCharacteristics.LENS_FACING) ==
+            CameraCharacteristics.LENS_FACING_FRONT) 1 else -1
+
+        return (sensorOrientationDegrees - (deviceOrientationDegrees * sign) + 360) % 360
+    }
+
+    private fun computeExifOrientation(rotationDegrees: Int, mirrored: Boolean) = when {
+        rotationDegrees == 0 && !mirrored -> ExifInterface.ORIENTATION_NORMAL
+        rotationDegrees == 0 && mirrored -> ExifInterface.ORIENTATION_FLIP_HORIZONTAL
+        rotationDegrees == 180 && !mirrored -> ExifInterface.ORIENTATION_ROTATE_180
+        rotationDegrees == 180 && mirrored -> ExifInterface.ORIENTATION_FLIP_VERTICAL
+        rotationDegrees == 270 && mirrored -> ExifInterface.ORIENTATION_TRANSVERSE
+        rotationDegrees == 90 && !mirrored -> ExifInterface.ORIENTATION_ROTATE_90
+        rotationDegrees == 90 && mirrored -> ExifInterface.ORIENTATION_TRANSPOSE
+        rotationDegrees == 270 && mirrored -> ExifInterface.ORIENTATION_ROTATE_270
+        rotationDegrees == 270 && !mirrored -> ExifInterface.ORIENTATION_TRANSVERSE
+        else -> ExifInterface.ORIENTATION_UNDEFINED
+    }
+
+    private fun releaseCamera() {
         try {
             mCamera.close()
         } catch (exc: Throwable) {
@@ -535,5 +638,16 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         }
         cameraThread.quitSafely()
         imageReaderThread.quitSafely()
+    }
+
+    private fun releaseMediaRecorder() {
+        mediaRecorder.reset()
+        mediaRecorder.release()
+        mediaSurface.release()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        releaseCamera()
     }
 }

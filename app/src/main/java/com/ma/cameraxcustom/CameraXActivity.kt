@@ -66,7 +66,7 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
             }
             true
         }
-        mBinding.ivCamera.setOnTouchListener(){view,event->
+        mBinding.ivCamera.setOnTouchListener(){ _, event->
             when(event.action){
                 MotionEvent.ACTION_UP->{
                     if(videoStatus){
@@ -94,8 +94,6 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
         mBinding.ivFlash.setOnClickListener {
             camera?.cameraControl?.enableTorch(camera?.cameraInfo?.torchState?.value != TorchState.ON)
         }
-
-
         //监听点击事件进行手动对焦
         mBinding.cameraPreview.setOnTouchListener { _, motionEvent ->
             val meteringPoint = mBinding.cameraPreview.meteringPointFactory
@@ -311,7 +309,7 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
     }
 
     /**
-     * 获取摄像头信息
+     * 获取摄像头信息  也可在此设置需要的ID
      */
     @SuppressLint("UnsafeOptInUsageError")
     private fun selectExternalOrBestCamera(provider: ProcessCameraProvider?):CameraSelector? {
