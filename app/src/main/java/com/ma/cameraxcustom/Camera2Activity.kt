@@ -9,8 +9,10 @@ import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.ImageFormat
+import android.graphics.Matrix
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
+import android.hardware.camera2.params.StreamConfigurationMap
 import android.media.*
 import android.net.Uri
 import android.os.*
@@ -38,6 +40,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 import kotlin.math.abs
+import kotlin.math.min
 
 
 class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
@@ -118,7 +121,8 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
                         videoStatus=false
                         mediaRecorder.stop()
                         releaseMediaRecorder()
-                        showResult(Uri.fromFile(mediaFile))
+                        startPreview()
+                        //showResult(Uri.fromFile(mediaFile))
                     }
                 }
 
@@ -130,7 +134,6 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
             openAlbum()
         }
         mBinding.ivSwitch.setOnClickListener {
-            releaseCamera()
             cameraId=if(cameraId==BACK_CAMERAID){
                 FRONT_CAMERAID
             }else{
@@ -200,7 +203,6 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
 
             override fun onSurfaceTextureDestroyed(p0: SurfaceTexture): Boolean {
                 Log.e(TAG, "onSurfaceTextureDestroyed" )
-                releaseCamera()
                 return false
             }
 
@@ -422,16 +424,41 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         }
     }
 
-
     /**
-     * 初始化相机
+     * 获取相机ID  也可在此设置需要的ID
      */
-    @SuppressLint("MissingPermission")
-    private fun initCamera() = lifecycleScope.launch(Dispatchers.Main) {
-        enumerateCameras()
+    @SuppressLint("InlinedApi")
+    private fun initCamera() = lifecycleScope.launch(Dispatchers.Main){
+        cameraManager=getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val cameraIds = cameraManager.cameraIdList.filter {
+            val characteristics = cameraManager.getCameraCharacteristics(it)
+            val capabilities = characteristics.get(
+                CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+            capabilities?.contains(
+                CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE) ?: false
+        }
+
+        // Iterate over the list of cameras and return all the compatible ones
+        cameraIds.forEach { id ->
+            val characteristics = cameraManager.getCameraCharacteristics(id)
+            Log.e(TAG, "enumerateCameras:摄像头ID为 $id" )
+            //Log.e(TAG, "enumerateCameras:摄像头变焦范围 ${characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)}" )
+            //Log.e(TAG, "enumerateCameras:摄像头最大数码变焦倍数 ${characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM)}" )
+            // FRONT=0 BACK=1
+            Log.e(TAG, "enumerateCameras:摄像头位置 ${lensFacing(characteristics.get(CameraCharacteristics.LENS_FACING)!!)}" )
+            // LEGACY=2 < LIMITED=0 < FULL=1 < LEVEL_3=3       EXTERNAL=4
+            // LEGACY（旧版）。这些设备通过 Camera API2 接口为应用提供功能，而且这些功能与通过 Camera API1 接口提供给应用的功能大致相同。旧版框架代码在概念上将 Camera API2 调用转换为 Camera API1 调用；旧版设备不支持 Camera API2 功能，例如每帧控件。
+            // LIMITED（有限）。这些设备支持部分（但不是全部）Camera API2 功能，并且必须使用 Camera HAL 3.2 或更高版本。
+            // FULL（全面）。这些设备支持 Camera API2 的所有主要功能，并且必须使用 Camera HAL 3.2 或更高版本以及 Android 5.0 或更高版本。
+            // LEVEL_3（级别 3）：这些设备支持 YUV 重新处理和 RAW 图片捕获，以及其他输出流配置。
+            // EXTERNAL（外部）：这些设备类似于 LIMITED 设备，但有一些例外情况；例如，某些传感器或镜头信息可能未被报告或具有较不稳定的帧速率。此级别用于外部相机（如 USB 网络摄像头）。
+            Log.e(TAG, "enumerateCameras:摄像头API的支持级别 ${supportedHardwareLevel(characteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)!!)}" )
+            Log.e(TAG, "enumerateCameras:摄像头成像区域的内存大小(最大分辨率) ${characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)}" )
+            Log.e(TAG, "enumerateCameras:摄像头是否支持闪光灯 ${characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE)}" )
+            //Log.e(TAG, "enumerateCameras:摄像头支持的功能 ${characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)}" )
+        }
         characteristics=cameraManager.getCameraCharacteristics(cameraId)
         mCamera=openCamera(cameraManager,cameraId,cameraHandler)
-
         val orientationEventListener = object : OrientationEventListener(applicationContext) {
             override fun onOrientationChanged(orientation: Int) {
                 val rotation = when {
@@ -446,22 +473,31 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         }
         orientationEventListener.enable()
 
+        startPreview()
+    }
+
+    /**
+     * 开始预览
+     */
+    @SuppressLint("MissingPermission")
+    private fun startPreview()= lifecycleScope.launch(Dispatchers.Main){
         val cameraConfig = characteristics
             .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
-        var size=cameraConfig
-            .getOutputSizes(ImageFormat.JPEG)
-            .maxByOrNull { it.height * it.width }!!
-        var diff= 10.0
-        cameraConfig.getOutputSizes(ImageFormat.JPEG).forEach{
-                val value= abs(mBinding.textureView.height.toDouble()/mBinding.textureView.width - it.height /it.width)
-                if(diff>value){
-                    diff=value
-                    size= Size(it.height ,it.width)
-                }
+        var size=Size(1080,1920)
+        var diff= 1.0
+        cameraConfig.getOutputSizes(SurfaceTexture::class.java).forEach{
+            val previewRatio=it.height.toDouble() /it.width//获取到的宽高是反的
+            val surfaceRatio= mBinding.textureView.width.toDouble()/mBinding.textureView.height
+            val value=previewRatio-surfaceRatio
+            Log.e(TAG, "initCamera:支持的照片尺寸 ${it.height}* ${it.width}" )
+            if(value>0&&value<diff){
+                diff=value
+                size= Size(it.height ,it.width)
             }
-        imageReader =
-            ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, IMAGE_BUFFER_SIZE)
-        Log.e(TAG, "initCamera:设置的拍照尺寸 ${size.width}* ${size.height}" )
+        }
+        Log.e(TAG, "initCamera:最佳照片尺寸 ${size.width}* ${size.height}" )
+        mBinding.textureView.setTransform(computeTransformationMatrix(size))
+        imageReader = ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, IMAGE_BUFFER_SIZE)
         //val targets = listOf(mBinding.surfaceView.holder.surface, imageReader.surface)
         val surface = Surface(mBinding.textureView.surfaceTexture)
         val targets = listOf(surface, imageReader.surface)
@@ -487,6 +523,25 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         mSession.setRepeatingRequest(captureRequest.build(), null, cameraHandler)
     }
 
+    private fun computeTransformationMatrix(previewSize: Size): Matrix {
+        val matrix = Matrix()
+        var sx =  mBinding.textureView.height.toFloat()*previewSize.width/previewSize.height/mBinding.textureView.width.toFloat()
+        var sy =  mBinding.textureView.width.toFloat()*previewSize.height/previewSize.width/mBinding.textureView.height.toFloat()
+        if(sx<1){
+            sx=sx*1/sx
+            sy=sy*1/sx
+        }else if(sy<1){
+            sx=sx*1/sy
+            sy=sy*1/sy
+        }
+        matrix.setScale(
+            sx,
+            sy,
+            mBinding.textureView.width / 2f,
+            mBinding.textureView.height / 2f
+        )
+        return matrix
+    }
 
     /**
      * 获取相机控制类
@@ -544,41 +599,6 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         }, handler)
     }
 
-
-    /**
-     * 获取相机ID  也可在此设置需要的ID
-     */
-    @SuppressLint("InlinedApi")
-    private fun enumerateCameras() {
-        cameraManager=getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        val cameraIds = cameraManager.cameraIdList.filter {
-            val characteristics = cameraManager.getCameraCharacteristics(it)
-            val capabilities = characteristics.get(
-                CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
-            capabilities?.contains(
-                CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE) ?: false
-        }
-
-        // Iterate over the list of cameras and return all the compatible ones
-        cameraIds.forEach { id ->
-            val characteristics = cameraManager.getCameraCharacteristics(id)
-            Log.e(TAG, "enumerateCameras:摄像头ID为 $id" )
-            //Log.e(TAG, "enumerateCameras:摄像头变焦范围 ${characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)}" )
-            //Log.e(TAG, "enumerateCameras:摄像头最大数码变焦倍数 ${characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM)}" )
-            // FRONT=0 BACK=1
-            Log.e(TAG, "enumerateCameras:摄像头位置 ${lensFacing(characteristics.get(CameraCharacteristics.LENS_FACING)!!)}" )
-            // LEGACY=2 < LIMITED=0 < FULL=1 < LEVEL_3=3       EXTERNAL=4
-            // LEGACY（旧版）。这些设备通过 Camera API2 接口为应用提供功能，而且这些功能与通过 Camera API1 接口提供给应用的功能大致相同。旧版框架代码在概念上将 Camera API2 调用转换为 Camera API1 调用；旧版设备不支持 Camera API2 功能，例如每帧控件。
-            // LIMITED（有限）。这些设备支持部分（但不是全部）Camera API2 功能，并且必须使用 Camera HAL 3.2 或更高版本。
-            // FULL（全面）。这些设备支持 Camera API2 的所有主要功能，并且必须使用 Camera HAL 3.2 或更高版本以及 Android 5.0 或更高版本。
-            // LEVEL_3（级别 3）：这些设备支持 YUV 重新处理和 RAW 图片捕获，以及其他输出流配置。
-            // EXTERNAL（外部）：这些设备类似于 LIMITED 设备，但有一些例外情况；例如，某些传感器或镜头信息可能未被报告或具有较不稳定的帧速率。此级别用于外部相机（如 USB 网络摄像头）。
-            Log.e(TAG, "enumerateCameras:摄像头API的支持级别 ${supportedHardwareLevel(characteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)!!)}" )
-            Log.e(TAG, "enumerateCameras:摄像头成像区域的内存大小(最大分辨率) ${characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)}" )
-            Log.e(TAG, "enumerateCameras:摄像头是否支持闪光灯 ${characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE)}" )
-            //Log.e(TAG, "enumerateCameras:摄像头支持的功能 ${characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)}" )
-        }
-    }
 
     private fun lensFacing(value: Int) = when(value) {
         CameraCharacteristics.LENS_FACING_BACK -> "后置"

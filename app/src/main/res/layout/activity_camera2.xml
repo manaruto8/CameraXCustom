@@ -7,7 +7,7 @@
     tools:context=".Camera2Activity">
 
 
-    <TextureView
+    <com.ma.cameraxcustom.utils.AutoFitTextureView
         android:id="@+id/textureView"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />

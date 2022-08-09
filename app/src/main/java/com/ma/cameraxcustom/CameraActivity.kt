@@ -176,7 +176,6 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
 
             override fun surfaceDestroyed(p0: SurfaceHolder) {
                 Log.e(TAG, "surfaceDestroyed" )
-                releaseCamera()
             }
 
         })
@@ -327,6 +326,12 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         try {
             mCamera=Camera.open(lensFacing)
             mParameters= mCamera?.parameters
+            mParameters?.supportedPreviewSizes?.forEach {
+                Log.e(TAG, "openCamera:支持的预览尺寸 ${it.height}* ${it.width}" )
+            }
+            mParameters?.supportedPictureSizes?.forEach {
+                Log.e(TAG, "openCamera:支持的照片尺寸 ${it.height}* ${it.width}" )
+            }
             mParameters?.focusMode = Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE
             mParameters?.setRotation(getCameraDisplayOrientation())
 //            闪光灯配置，Parameters.getFlashMode()。
