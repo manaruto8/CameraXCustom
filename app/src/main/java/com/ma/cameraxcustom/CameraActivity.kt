@@ -6,6 +6,7 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+
 import android.graphics.Rect
 import android.hardware.Camera
 import android.media.CamcorderProfile
@@ -16,6 +17,8 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import android.util.Size
+
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.SurfaceHolder
@@ -255,6 +258,9 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
             it.unlock()
             mediaRecorder?.run {
                 setCamera(mCamera)
+                mParameters?.supportedVideoSizes?.forEach {  cameraSize ->
+                    Log.e(TAG, "openCamera:支持的录制尺寸 ${cameraSize.height}* ${cameraSize.width}" )
+                }
                 setAudioSource(MediaRecorder.AudioSource.CAMCORDER)
                 setVideoSource(MediaRecorder.VideoSource.CAMERA)
                 setOutputFile(mediaFile?.absolutePath)
@@ -326,13 +332,27 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         try {
             mCamera=Camera.open(lensFacing)
             mParameters= mCamera?.parameters
+            val previewSize=mParameters
+                ?.supportedPreviewSizes
+                ?.maxByOrNull { it.width *it.height }!!
+            var size=Size(previewSize.width,previewSize.height)
+            var diff= 1.0
             mParameters?.supportedPreviewSizes?.forEach {
+                val previewRatio=it.height.toDouble() /it.width//获取到的宽高是反的
+                val surfaceRatio= mBinding.surfaceView.width.toDouble()/mBinding.surfaceView.height
+                val value=previewRatio-surfaceRatio
                 Log.e(TAG, "openCamera:支持的预览尺寸 ${it.height}* ${it.width}" )
+                if(value>0&&value<diff){
+                    diff=value
+                    size= Size(it.width, it.height)
+                }
             }
             mParameters?.supportedPictureSizes?.forEach {
                 Log.e(TAG, "openCamera:支持的照片尺寸 ${it.height}* ${it.width}" )
             }
+            mBinding.surfaceView.setAspectRatio(size.width,size.height)
             mParameters?.focusMode = Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE
+            mParameters?.setPictureSize(size.width,size.height)
             mParameters?.setRotation(getCameraDisplayOrientation())
 //            闪光灯配置，Parameters.getFlashMode()。
 //            Camera.Parameters.FLASH_MODE_AUTO 自动模式，当光线较暗时自动打开闪光灯；

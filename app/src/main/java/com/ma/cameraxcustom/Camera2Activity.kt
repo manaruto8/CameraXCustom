@@ -7,14 +7,14 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
-import android.graphics.Color
-import android.graphics.ImageFormat
-import android.graphics.Matrix
-import android.graphics.SurfaceTexture
+import android.graphics.*
+import android.hardware.Camera
 import android.hardware.camera2.*
+import android.hardware.camera2.params.MeteringRectangle
 import android.hardware.camera2.params.StreamConfigurationMap
 import android.media.*
 import android.net.Uri
+import android.net.wifi.aware.Characteristics
 import android.os.*
 import android.provider.MediaStore
 import android.util.Log
@@ -82,7 +82,10 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     private val cameraHandler = Handler(cameraThread.looper)
     private lateinit var  mediaSurface:Surface
     private lateinit var mediaRecorder:MediaRecorder
+    private var flashMode = CameraMetadata.FLASH_MODE_OFF
     private var cameraId=BACK_CAMERAID
+    private lateinit var captureRequest:CaptureRequest.Builder
+    private lateinit var size:Size
     private var videoStatus: Boolean = false
     private var type=1
     private var mediaFile:File?=null
@@ -122,7 +125,7 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
                         mediaRecorder.stop()
                         releaseMediaRecorder()
                         startPreview()
-                        //showResult(Uri.fromFile(mediaFile))
+                        showResult(Uri.fromFile(mediaFile))
                     }
                 }
 
@@ -145,13 +148,39 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
             }
         }
         mBinding.ivFlash.setOnClickListener {
-
+            flashMode = if(flashMode==CameraMetadata.FLASH_MODE_OFF){
+                CameraMetadata.FLASH_MODE_TORCH
+            }else{
+                CameraMetadata.FLASH_MODE_OFF
+            }
+            captureRequest.set(
+                CaptureRequest.FLASH_MODE,
+                flashMode
+            )
+            mSession.setRepeatingRequest(captureRequest.build(), null, cameraHandler)
         }
 
 
         //监听点击事件进行手动对焦
         mBinding.textureView.setOnTouchListener { _, motionEvent ->
 
+//            val areaX = (motionEvent.x / mBinding.textureView.width * size.height)
+//            val areaY = (motionEvent.y / mBinding.textureView.height * size.width)
+//
+//            // 创建Rect区域
+//            val focusArea = Rect()
+//            focusArea.left = (areaX.toInt() - 100).coerceAtLeast(0) // 取最大或最小值，避免范围溢出屏幕坐标
+//            focusArea.top = (areaY.toInt() - 100).coerceAtLeast(0)
+//            focusArea.right = (areaX.toInt() + 100).coerceAtMost(size.height)
+//            focusArea.bottom = (areaY.toInt() + 100).coerceAtMost(size.width)
+//            captureRequest.apply{
+//                set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(MeteringRectangle(focusArea, 1000)))
+//                set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(MeteringRectangle(focusArea, 1000)))
+//                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+//                set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_START)
+//                set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_START)
+//            }
+//            mSession.setRepeatingRequest(captureRequest.build(), null, cameraHandler)
             false
         }
         checkPremission()
@@ -354,7 +383,7 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
             val mediaCodec=MediaCodec.createDecoderByType(VIDEO_MIME_TYPE)
             mediaCodec.createInputSurface()
         }
-        Log.e(TAG, "startRecording:设置的录制尺寸 ${mediaSize.width}* ${mediaSize.height}，帧率为 $mediaFps Fps" )
+        Log.e(TAG, "startRecording:最佳录制尺寸 ${mediaSize.width}* ${mediaSize.height}，帧率为 $mediaFps Fps" )
         mediaRecorder=createRecorder(mediaSurface,mediaFps,mediaSize)
         val surface = Surface(mBinding.textureView.surfaceTexture)
         val targets = listOf(surface, mediaSurface)
@@ -483,19 +512,24 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     private fun startPreview()= lifecycleScope.launch(Dispatchers.Main){
         val cameraConfig = characteristics
             .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
-        var size=Size(1080,1920)
+        size=cameraConfig
+            .getOutputSizes(ImageFormat.JPEG)
+            .maxByOrNull { it.width *it.height }!!
         var diff= 1.0
         cameraConfig.getOutputSizes(SurfaceTexture::class.java).forEach{
             val previewRatio=it.height.toDouble() /it.width//获取到的宽高是反的
             val surfaceRatio= mBinding.textureView.width.toDouble()/mBinding.textureView.height
             val value=previewRatio-surfaceRatio
-            Log.e(TAG, "initCamera:支持的照片尺寸 ${it.height}* ${it.width}" )
+            Log.e(TAG, "startPreview:支持的预览尺寸 ${it.height}* ${it.width}" )
             if(value>0&&value<diff){
                 diff=value
-                size= Size(it.height ,it.width)
+                size= Size(it.width ,it.height)
             }
         }
-        Log.e(TAG, "initCamera:最佳照片尺寸 ${size.width}* ${size.height}" )
+        cameraConfig.getOutputSizes(ImageFormat.JPEG).forEach{
+            Log.e(TAG, "startPreview:支持的照片尺寸 ${it.height}* ${it.width}" )
+        }
+        Log.e(TAG, "startPreview:最佳照片尺寸 ${size.height}* ${size.width}" )
         mBinding.textureView.setTransform(computeTransformationMatrix(size))
         imageReader = ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, IMAGE_BUFFER_SIZE)
         //val targets = listOf(mBinding.surfaceView.holder.surface, imageReader.surface)
@@ -511,7 +545,7 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
 //        TEMPLATE_MANUAL：创建一个基本捕获请求，这种请求中所有的自动控制都是禁用的(自动曝光，自动白平衡、自动焦点)。
 //        val captureRequest = mCamera.createCaptureRequest(
 //            CameraDevice.TEMPLATE_PREVIEW).apply { addTarget(mBinding.surfaceView.holder.surface) }
-        val captureRequest = mCamera.createCaptureRequest(
+        captureRequest = mCamera.createCaptureRequest(
             CameraDevice.TEMPLATE_PREVIEW
         ).apply {
             addTarget(surface)
@@ -519,14 +553,18 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
                 CaptureRequest.CONTROL_AF_MODE,
                 CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
             )
+            set(
+                CaptureRequest.FLASH_MODE,
+                flashMode
+            )
         }
         mSession.setRepeatingRequest(captureRequest.build(), null, cameraHandler)
     }
 
-    private fun computeTransformationMatrix(previewSize: Size): Matrix {
+    private fun computeTransformationMatrix(previewSize: Size): Matrix {//获取到的宽高是反的
         val matrix = Matrix()
-        var sx =  mBinding.textureView.height.toFloat()*previewSize.width/previewSize.height/mBinding.textureView.width.toFloat()
-        var sy =  mBinding.textureView.width.toFloat()*previewSize.height/previewSize.width/mBinding.textureView.height.toFloat()
+        var sx =  mBinding.textureView.height.toFloat()*previewSize.height/previewSize.width/mBinding.textureView.width.toFloat()
+        var sy =  mBinding.textureView.width.toFloat()*previewSize.width/previewSize.height/mBinding.textureView.height.toFloat()
         if(sx<1){
             sx=sx*1/sx
             sy=sy*1/sx
@@ -540,6 +578,7 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
             mBinding.textureView.width / 2f,
             mBinding.textureView.height / 2f
         )
+        Log.e(TAG, "computeTransformationMatrix:设置的放大比例sx= $sx sy= $sy" )
         return matrix
     }
 
