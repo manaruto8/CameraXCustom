@@ -1,46 +1,10 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!--
-  ~ Copyright 2020 The Android Open Source Project
-  ~
-  ~ Licensed under the Apache License, Version 2.0 (the "License");
-  ~ you may not use this file except in compliance with the License.
-  ~ You may obtain a copy of the License at
-  ~
-  ~     https://www.apache.org/licenses/LICENSE-2.0
-  ~
-  ~ Unless required by applicable law or agreed to in writing, software
-  ~ distributed under the License is distributed on an "AS IS" BASIS,
-  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  ~ See the License for the specific language governing permissions and
-  ~ limitations under the License.
-  -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    android:tint="#FFFFFF"
     android:width="24dp"
     android:height="24dp"
-    android:viewportWidth="46.0"
-    android:viewportHeight="46.0"
-    tools:ignore="VectorRaster">
-    <path android:fillAlpha="0" android:fillColor="#D8D8D8"
-        android:fillType="evenOdd" android:pathData="M-4,-4h54v54h-54z"
-        android:strokeColor="#00000000" android:strokeWidth="1"/>
-    <path android:fillColor="#00000000" android:fillType="evenOdd"
-        android:pathData="M23,23m-6.6,0a6.6,6.6 0,1 1,13.2 0a6.6,6.6 0,1 1,-13.2 0"
-        android:strokeColor="#FFFFFF" android:strokeWidth="2.8"/>
-    <path android:fillColor="#FEFEFE" android:fillType="evenOdd"
-        android:pathData="M42.923,34.5C38.9462,41.3747 31.5132,46 23,46C10.2975,46 0,35.7025 0,23L2.8,23C2.8,34.1562 11.8438,43.2 23,43.2C29.8831,43.2 35.9621,39.7574 39.6091,34.5L42.923,34.5ZM46,23L43.2,23C43.2,11.8438 34.1562,2.8 23,2.8C16.1169,2.8 10.0379,6.2426 6.3909,11.5L3.077,11.5C7.0538,4.6253 14.4868,0 23,0C35.7025,0 46,10.2975 46,23Z"
-        android:strokeColor="#00000000" android:strokeWidth="1"/>
-    <path android:fillColor="#FEFEFE" android:fillType="evenOdd"
-        android:pathData="M3,9.2h10v2.8h-10z"
-        android:strokeColor="#00000000" android:strokeWidth="1"/>
-    <path android:fillColor="#FEFEFE" android:fillType="evenOdd"
-        android:pathData="M33,34h10v2.8h-10z"
-        android:strokeColor="#00000000" android:strokeWidth="1"/>
-    <path android:fillColor="#FEFEFE" android:fillType="evenOdd"
-        android:pathData="M5.8,2l-0,10l-2.8,0l-0,-10z"
-        android:strokeColor="#00000000" android:strokeWidth="1"/>
-    <path android:fillColor="#FEFEFE" android:fillType="evenOdd"
-        android:pathData="M43,34l-0,10l-2.8,0l-0,-10z"
-        android:strokeColor="#00000000" android:strokeWidth="1"/>
+    android:viewportWidth="960"
+    android:viewportHeight="960"
+    android:tint="@android:color/white">
+  <path
+      android:fillColor="@android:color/white"
+      android:pathData="M480,700Q555,700 607.5,647.5Q660,595 660,520Q660,515 659.5,510Q659,505 658,500L578,500Q580,505 580,510Q580,515 580,520Q580,562 551,591Q522,620 480,620L330,620Q354,656 393.5,678Q433,700 480,700ZM302,540L382,540Q380,535 380,530Q380,525 380,520Q380,478 409,449Q438,420 480,420L630,420Q606,384 566.5,362Q527,340 480,340Q405,340 352.5,392.5Q300,445 300,520Q300,525 300.5,530Q301,535 302,540ZM160,840Q127,840 103.5,816.5Q80,793 80,760L80,280Q80,247 103.5,223.5Q127,200 160,200L286,200L360,120L600,120L674,200L800,200Q833,200 856.5,223.5Q880,247 880,280L880,760Q880,793 856.5,816.5Q833,840 800,840L160,840ZM160,760L800,760Q800,760 800,760Q800,760 800,760L800,280Q800,280 800,280Q800,280 800,280L638,280L565,200L395,200L322,280L160,280Q160,280 160,280Q160,280 160,280L160,760Q160,760 160,760Q160,760 160,760ZM480,520Q480,520 480,520Q480,520 480,520L480,520Q480,520 480,520Q480,520 480,520L480,520L480,520L480,520L480,520L480,520Q480,520 480,520Q480,520 480,520L480,520Q480,520 480,520Q480,520 480,520Z"/>
 </vector>
