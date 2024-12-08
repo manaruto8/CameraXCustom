@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.graphics.*
 import android.hardware.camera2.*
 import android.media.*
+import android.net.Uri
 import android.os.*
 import android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
 import android.util.Log
@@ -29,6 +30,7 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ArrayBlockingQueue
+import kotlin.collections.ArrayList
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
@@ -86,7 +88,10 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     private var videoStatus = CameraConfig.VideoState.PREVIEW
     private var mode = CameraConfig.CameraMode.PHOTO
     private var ratio = CameraConfig.CameraRatio.RECTANGLE_4_3
-    private var relative:Int=0
+    private var relative: Int=0
+    private var supportYUV: Boolean=false
+    private var supportRAW: Boolean=false
+    private var file: File? = null
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -115,6 +120,11 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
             true
         }
         mBinding.ivAlbum.setOnClickListener {
+            if (file != null) {
+                CameraUtils.showResult(this, file)
+            } else {
+
+            }
 
         }
         mBinding.ivSwitch.setOnClickListener {
@@ -234,8 +244,10 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
             Log.e(TAG, "initCamera:resolution ${characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)}" )
             Log.e(TAG, "initCamera:flash ${characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE)}" )
         }
-        Log.e(TAG, "initCamera:select id ${cameraId}" )
+
         characteristics=cameraManager.getCameraCharacteristics(cameraId)
+        Log.e(TAG, "initCamera:select id ${cameraId}" )
+
         mCamera=openCamera(cameraManager,cameraId,cameraHandler)
         val orientationEventListener = object : OrientationEventListener(applicationContext) {
             override fun onOrientationChanged(orientation: Int) {
@@ -297,17 +309,48 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         cameraConfig.getOutputSizes(ImageFormat.JPEG).forEach{
             Log.e(TAG, "startPreview jpeg: ${it.width} * ${it.height}" )
         }
-        cameraConfig.getOutputSizes(ImageFormat.YUV_420_888).forEach{
-            Log.e(TAG, "startPreview yuv: ${it.width} * ${it.height}" )
+        if (cameraConfig.isOutputSupportedFor(ImageFormat.YUV_420_888)) {
+            supportYUV = true
+            cameraConfig.getOutputSizes(ImageFormat.YUV_420_888).forEach {
+                Log.e(TAG, "startPreview yuv: ${it.width} * ${it.height}")
+            }
+        }else {
+            supportYUV = false
+            Log.e(TAG, "startPreview nosupport yuv")
         }
-        cameraConfig.getOutputSizes(ImageFormat.RAW_SENSOR).forEach{
-            Log.e(TAG, "startPreview raw: ${it.width} * ${it.height}" )
+        if (cameraConfig.isOutputSupportedFor(ImageFormat.RAW_SENSOR)) {
+            supportRAW = true
+            cameraConfig.getOutputSizes(ImageFormat.RAW_SENSOR).forEach {
+                Log.e(TAG, "startPreview rawsensor: ${it.width} * ${it.height}")
+            }
+        }else {
+            supportRAW = false
+            Log.e(TAG, "startPreview nosupport rawsensor")
+        }
+        if (cameraConfig.isOutputSupportedFor(ImageFormat.RAW10)) {
+            cameraConfig.getOutputSizes(ImageFormat.RAW10).forEach {
+                Log.e(TAG, "startPreview raw10: ${it.width} * ${it.height}")
+            }
+        }else {
+            Log.e(TAG, "startPreview nosupport raw10")
+        }
+        if (cameraConfig.isOutputSupportedFor(ImageFormat.RAW12)) {
+            cameraConfig.getOutputSizes(ImageFormat.RAW12).forEach {
+                Log.e(TAG, "startPreview raw12: ${it.width} * ${it.height}")
+            }
+        }else {
+            Log.e(TAG, "startPreview nosupport raw12")
         }
 
         previewSize=CameraUtils.chooseSize(cameraConfig.getOutputSizes(SurfaceTexture::class.java),windowManager.defaultDisplay.height, windowManager.defaultDisplay.width, ratio.size, true)
         pictureSize=CameraUtils.chooseSize(cameraConfig.getOutputSizes(ImageFormat.JPEG),windowManager.defaultDisplay.height, windowManager.defaultDisplay.width, ratio.size, false)
-        yuvSize=cameraConfig.getOutputSizes(ImageFormat.YUV_420_888)[0]
-        rawSize=cameraConfig.getOutputSizes(ImageFormat.RAW_SENSOR)[0]
+        if (supportYUV) {
+            yuvSize=cameraConfig.getOutputSizes(ImageFormat.YUV_420_888)[0]
+        }
+        if (supportRAW) {
+            rawSize=cameraConfig.getOutputSizes(ImageFormat.RAW_SENSOR)[0]
+        }
+
         mBinding.textureView.setAspectRatio(previewSize.height, previewSize.width)
         mBinding.textureView.surfaceTexture?.setDefaultBufferSize(previewSize.width, previewSize.height)
         //mBinding.surfaceView.setAspectRatio(previewSize.width,previewSize.height)
@@ -315,12 +358,44 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         Log.e(TAG, "startPreview bestPreviewSize: ${previewSize.width} * ${previewSize.height}" )
         Log.e(TAG, "startPreview bestPictureSize: ${pictureSize.width} * ${pictureSize.height}" )
 
-        imageReader = ImageReader.newInstance(pictureSize.width, pictureSize.height, ImageFormat.JPEG, IMAGE_BUFFER_SIZE)
-        yuvImageReader = ImageReader.newInstance(yuvSize.width, yuvSize.height, ImageFormat.YUV_420_888, IMAGE_BUFFER_SIZE)
-        rawImageReader = ImageReader.newInstance(rawSize.width, rawSize.height, ImageFormat.RAW_SENSOR, IMAGE_BUFFER_SIZE)
+        imageReader = ImageReader.newInstance(
+            pictureSize.width,
+            pictureSize.height,
+            ImageFormat.JPEG,
+            IMAGE_BUFFER_SIZE)
+
+        if (supportYUV) {
+            yuvImageReader = ImageReader.newInstance(
+                yuvSize.width,
+                yuvSize.height,
+                ImageFormat.YUV_420_888,
+                IMAGE_BUFFER_SIZE
+            )
+        }
+
+        if (supportRAW) {
+            rawImageReader = ImageReader.newInstance(
+                rawSize.width,
+                rawSize.height,
+                ImageFormat.RAW_SENSOR,
+                IMAGE_BUFFER_SIZE
+            )
+        }
         val surface = Surface(mBinding.textureView.surfaceTexture)
         //val surface = mBinding.surfaceView.holder.surface
-        val targets = listOf(surface, imageReader.surface, yuvImageReader.surface, rawImageReader.surface)
+        val targets = ArrayList<Surface>()
+        targets.add(surface)
+        targets.add(imageReader.surface)
+
+        if (supportYUV) {
+            targets.add(yuvImageReader.surface)
+        }
+
+        if (supportRAW) {
+            targets.add(rawImageReader.surface)
+        }
+
+
         mSession = createCaptureSession(mCamera, targets, cameraHandler)
 
         captureRequest = mCamera.createCaptureRequest(
@@ -387,8 +462,15 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
             CameraDevice.TEMPLATE_STILL_CAPTURE)
             .apply {
                 addTarget(imageReader.surface)
-                addTarget(yuvImageReader.surface)
-                addTarget(rawImageReader.surface)
+
+                if (supportYUV ) {
+                    addTarget(yuvImageReader.surface)
+                }
+
+                if (supportRAW) {
+                    addTarget(rawImageReader.surface)
+                }
+
             }
         mSession.capture(captureRequest.build(), object : CameraCaptureSession.CaptureCallback() {
 
@@ -419,26 +501,38 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     private fun savePicture(image: Image) {
         val buffer = image.planes[0].buffer
         val bytes = ByteArray(buffer.remaining()).apply { buffer.get(this) }
-        val file = getOutputMediaFile("jpg")
+        file = getOutputMediaFile("jpg")
         FileOutputStream(file).use { it.write(bytes) }
         val mirrored = characteristics.get(CameraCharacteristics.LENS_FACING) ==
                 CameraCharacteristics.LENS_FACING_FRONT
         val exifOrientation = computeExifOrientation(relative, mirrored)
-        val exif = ExifInterface(file.absolutePath)
+        val exif = ExifInterface(file!!.absolutePath)
         exif.setAttribute(
             ExifInterface.TAG_ORIENTATION, exifOrientation.toString())
         exif.saveAttributes()
+
+        CameraUtils.showThumbnail(this, file, mBinding.ivAlbum)
+
     }
 
     private fun saveRAW(image: Image){
-        val buffer = image.planes[0].buffer
-        val bytes = ByteArray(buffer.remaining()).apply { buffer.get(this) }
-        FileOutputStream(getOutputMediaFile("raw")).use { it.write(bytes) }
+        if(Environment.isExternalStorageManager()) {
+            val buffer = image.planes[0].buffer
+            val bytes = ByteArray(buffer.remaining()).apply { buffer.get(this) }
+            FileOutputStream(getOutputMediaFile("raw")).use { it.write(bytes) }
+        } else {
+            Log.e(TAG, "no premission: ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION YUV cannot be saved ")
+        }
+
     }
 
     private fun saveYUV(image: Image) {
-        val bytes = CameraUtils.YUV_420_888toNV21(image)
-        FileOutputStream(getOutputMediaFile("yuv")).use { it.write(bytes) }
+        if(Environment.isExternalStorageManager()) {
+            val bytes = CameraUtils.YUV_420_888toNV21(image)
+            FileOutputStream(getOutputMediaFile("yuv")).use { it.write(bytes) }
+        } else {
+            Log.e(TAG, "no premission: ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION Raw cannot be saved ")
+        }
     }
 
 
@@ -498,16 +592,19 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         mode = CameraConfig.CameraMode.PHOTO
         videoStatus=CameraConfig.VideoState.PREVIEW
 
+        CameraUtils.showThumbnail(this, file, mBinding.ivAlbum)
         startPreview()
     }
 
 
     private fun createRecorder(surface: Surface, mediaFps:Int, mediaSize:  Size) = MediaRecorder().apply {
 
+        file = getOutputMediaFile("mp4")
+
         setAudioSource(MediaRecorder.AudioSource.MIC)
         setVideoSource(MediaRecorder.VideoSource.SURFACE)
         setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-        setOutputFile(getOutputMediaFile("mp4").absolutePath)
+        setOutputFile(file)
         setVideoEncodingBitRate(RECORDER_VIDEO_BITRATE)
         if (mediaFps > 0) setVideoFrameRate(mediaFps)
         setVideoSize(mediaSize.width, mediaSize.height)

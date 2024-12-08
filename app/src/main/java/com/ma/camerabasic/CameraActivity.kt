@@ -44,6 +44,7 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
     private var mode = CameraConfig.CameraMode.PHOTO
     private var ratio = CameraConfig.CameraRatio.RECTANGLE_4_3
     private var relative:Int=0
+    private var file: File? = null
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -73,7 +74,11 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         }
 
         mBinding.ivAlbum.setOnClickListener {
+            if (file != null) {
+                CameraUtils.showResult(this, file)
+            } else {
 
+            }
         }
         mBinding.ivSwitch.setOnClickListener {
             releaseCamera()
@@ -179,6 +184,7 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
     private fun openCamera() {
         if (!hasCamera(lensFacing)) return
         try {
+            Log.e(TAG, "initCamera:select id ${lensFacing}" )
             mCamera=Camera.open(lensFacing)
             mParameters= mCamera?.parameters
 
@@ -203,7 +209,6 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
             Log.e(TAG, "startPreview bestPictureSize: ${pictureSize.width} * ${pictureSize.height}" )
 
             mParameters?.setRotation(getCameraDisplayOrientation())
-            mParameters?.focusMode = Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE
             mCamera?.parameters=mParameters
             mCamera?.setPreviewCallback(this)
             mCamera?.setPreviewDisplay(mSurfaceHolder)
@@ -220,7 +225,6 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         var cameraNum=0
         for (i in 0 until Camera.getNumberOfCameras()) {
             Camera.getCameraInfo(i, info)
-            Log.e(TAG, "camera ID："+i+"--- ："+info.facing)
             Log.e(TAG, "initCamera:id $i" )
             Log.e(TAG, "initCamera:facing ${info.facing}" )
             if (info.facing ==lensFacing){
@@ -234,8 +238,10 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
     override fun onPictureTaken(p0: ByteArray?, p1: Camera?) {
         p1?.startPreview()
 
+        file = getOutputMediaFile("jpg")
+
         try {
-            val fos = FileOutputStream(getOutputMediaFile("jpeg"))
+            val fos = FileOutputStream(file)
             fos.write(p0)
             fos.close()
         } catch (e: FileNotFoundException) {
@@ -243,6 +249,10 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         } catch (e: IOException) {
             Log.d(TAG, "Error accessing file: ${e.message}")
         }
+
+        CameraUtils.showThumbnail(this, file, mBinding.ivAlbum)
+
+        CameraUtils.showThumbnail(this, file, mBinding.ivAlbum)
     }
 
 
@@ -257,16 +267,15 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
                 mParameters?.supportedVideoSizes?.forEach {
                     Log.e(TAG, "startRecording media: ${it.width} * ${it.height}" )
                 }
+
+                file = getOutputMediaFile("mp4")
+
                 setAudioSource(MediaRecorder.AudioSource.CAMCORDER)
                 setVideoSource(MediaRecorder.VideoSource.CAMERA)
-                setOutputFile(getOutputMediaFile("mp4"))
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.FROYO) {
-                    setProfile(CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH))
-                }else{
-                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                    setAudioEncoder(MediaRecorder.AudioEncoder.DEFAULT)
-                    setVideoEncoder(MediaRecorder.VideoEncoder.DEFAULT)
-                }
+                setOutputFile(file)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.DEFAULT)
+                setVideoEncoder(MediaRecorder.VideoEncoder.DEFAULT)
                 setOrientationHint(getCameraDisplayOrientation())
                 setPreviewDisplay(mBinding.surfaceView.holder.surface)
                 try {
@@ -303,6 +312,7 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         mode = CameraConfig.CameraMode.PHOTO
         videoStatus=CameraConfig.VideoState.PREVIEW
 
+        CameraUtils.showThumbnail(this, file, mBinding.ivAlbum)
     }
 
 

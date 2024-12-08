@@ -1,2 +1,2 @@
-rootProject.name = "camerabasic"
+rootProject.name = "CameraBasic"
 include ':app'

@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -22,6 +23,8 @@ import androidx.core.util.Consumer
 import androidx.lifecycle.LifecycleOwner
 import com.ma.camerabasic.databinding.ActivityCameraxBinding
 import com.ma.camerabasic.utils.CameraConfig
+import com.ma.camerabasic.utils.CameraUtils
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
@@ -36,6 +39,9 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
     private var cameraProvider: ProcessCameraProvider? = null
     private var videoStatus = CameraConfig.VideoState.PREVIEW
     private var mode = CameraConfig.CameraMode.PHOTO
+    private var type: Int = 0
+    private var uri: Uri? = null
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,7 +69,11 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
             true
         }
         mBinding.ivAlbum.setOnClickListener {
+            if (uri != null) {
+                CameraUtils.showResult(this@CameraXActivity, uri.toString(), type)
+            } else {
 
+            }
         }
         mBinding.ivSwitch.setOnClickListener {
             lensFacing = if (CameraSelector.LENS_FACING_FRONT == lensFacing) {
@@ -191,6 +201,10 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
 
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                     Log.e(TAG, "takePicture.onImageSaved: }" )
+                    type = 0
+                    uri = outputFileResults.savedUri
+                    CameraUtils.showThumbnail(this@CameraXActivity, uri, mBinding.ivAlbum)
+
                 }
             })
     }
@@ -249,6 +263,9 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
             is VideoRecordEvent.Finalize-> {
                 videoStatus=CameraConfig.VideoState.PREVIEW
                 Log.e(TAG, "VideoRecordEvent.Finalize" )
+                type = 1
+                uri = event.outputResults.outputUri
+                CameraUtils.showThumbnail(this@CameraXActivity, uri, mBinding.ivAlbum)
             }
             is VideoRecordEvent.Pause -> {
                 Log.e(TAG, "VideoRecordEvent.Pause" )

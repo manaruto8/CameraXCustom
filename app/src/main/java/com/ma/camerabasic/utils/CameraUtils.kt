@@ -1,10 +1,21 @@
 package com.ma.camerabasic.utils
 
+import android.app.Activity
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.ImageDecoder
 import android.hardware.camera2.CameraCharacteristics
 import android.media.Image
+import android.media.MediaMetadataRetriever
+import android.media.ThumbnailUtils
+import android.net.Uri
 import android.util.Log
 import android.util.Size
 import android.view.Surface
+import android.widget.ImageView
+import com.ma.camerabasic.Camera2Activity
+import com.ma.camerabasic.ShowResultActivity
+import java.io.File
 import java.nio.ReadOnlyBufferException
 import kotlin.experimental.inv
 import kotlin.math.abs
@@ -153,6 +164,65 @@ class CameraUtils {
             return nv21
         }
 
+
+        fun showThumbnail(activity: Activity, file: File?, view: ImageView) {
+            if (file == null ) return
+            Log.e(TAG, "showThumbnail: ${file.name}" )
+            val thumbnail: Bitmap
+            if (file.name.contains("mp4")) {
+                thumbnail = ThumbnailUtils.createVideoThumbnail(file, Size(640, 480), null)
+            } else {
+                thumbnail = ThumbnailUtils.createImageThumbnail(file, Size(640, 480), null)
+            }
+            activity.runOnUiThread {
+                view.setImageBitmap(thumbnail)
+            }
+
+        }
+
+
+        fun showThumbnail(activity: Activity, uri: Uri?, view: ImageView) {
+            if (uri == null ) return
+            Log.e(TAG, "showThumbnail: ${uri.path}" )
+            val thumbnail: Bitmap?
+            val cr = activity.contentResolver
+            val mimeType = cr.getType(uri)
+            if (mimeType!! == "video/mp4") {
+                val mediaMetadataRetriever = MediaMetadataRetriever()
+                mediaMetadataRetriever.setDataSource(activity, uri)
+                thumbnail = mediaMetadataRetriever.frameAtTime
+            } else {
+                thumbnail =
+                    activity.contentResolver.loadThumbnail(uri, Size(640, 480), null)
+            }
+            activity.runOnUiThread {
+                view.setImageBitmap(thumbnail)
+            }
+
+        }
+
+        fun showResult(activity: Activity, file: File?) {
+            if (file == null ) return
+            Log.e(TAG, "showResult: ${file.name}" )
+            val type: Int
+            if (file.name.contains("mp4")) {
+                type = 1
+            } else {
+                type = 0
+            }
+            showResult(activity, Uri.fromFile(file).path, type)
+
+        }
+
+        fun showResult(activity: Activity, uri: String?, type: Int) {
+            if (uri == null ) return
+            Log.e(TAG, "showResult: ${uri}" )
+            val intent =  Intent(activity, ShowResultActivity::class.java)
+            intent.putExtra("type",type)
+            intent.putExtra("uri",uri)
+            activity.startActivity(intent)
+
+        }
 
     }
 
