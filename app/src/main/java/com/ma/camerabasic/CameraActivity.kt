@@ -1,37 +1,35 @@
-package com.ma.cameraxcustom
+package com.ma.camerabasic
 
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.Activity
-import android.content.Intent
 import android.content.pm.PackageManager
 
 import android.graphics.Rect
 import android.hardware.Camera
 import android.media.CamcorderProfile
 import android.media.MediaRecorder
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
-import android.provider.MediaStore
 import android.util.Log
 import android.util.Size
 
-import android.view.MotionEvent
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import com.ma.cameraxcustom.databinding.ActivityCameraBinding
+import com.ma.camerabasic.databinding.ActivityCameraBinding
+import com.ma.camerabasic.utils.CameraConfig
+import com.ma.camerabasic.utils.CameraUtils
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.collections.ArrayList
 
 
 class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallback,Camera.PictureCallback,Camera.AutoFocusCallback {
@@ -42,9 +40,10 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
     private var mCamera: Camera?=null
     private var mParameters: Camera.Parameters?=null
     private var mediaRecorder:MediaRecorder?=null
-    private var videoStatus: Boolean = false
-    private var type=1
-    private var mediaFile:File?=null
+    private var videoStatus = CameraConfig.VideoState.PREVIEW
+    private var mode = CameraConfig.CameraMode.PHOTO
+    private var ratio = CameraConfig.CameraRatio.RECTANGLE_4_3
+    private var relative:Int=0
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -56,38 +55,25 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
 
     override fun initView() {
         mBinding.ivCamera.setOnClickListener {
-            Log.e(TAG, "initView: 拍照" )
-            type=1
-            mCamera?.takePicture(null,null,this)
+            if(mode == CameraConfig.CameraMode.PHOTO) {
+                mCamera?.takePicture(null,null,this)
+            } else if (mode == CameraConfig.CameraMode.VIDEO
+                && videoStatus == CameraConfig.VideoState.RECORDING){
+                stopRecording()
+            }
+
         }
         mBinding.ivCamera.setOnLongClickListener {
-            if(!videoStatus) {
-                Log.e(TAG, "initView: 视频开始" )
-                type=2
-                mBinding.tvTips.visibility= View.VISIBLE
+            if(videoStatus == CameraConfig.VideoState.PREVIEW) {
                 startRecording()
+            } else {
+                stopRecording()
             }
             true
         }
-        mBinding.ivCamera.setOnTouchListener { view, event->
-            when(event.action){
-                MotionEvent.ACTION_UP->{
-                    if(videoStatus){
-                        Log.e(TAG, "initView: 视频停止" )
-                        mBinding.tvTips.visibility=View.GONE
-                        mediaRecorder?.stop()
-                        releaseMediaRecorder()
-                        videoStatus=false
-                        showResult(Uri.fromFile(mediaFile))
-                    }
-                }
 
-            }
-            false
-        }
         mBinding.ivAlbum.setOnClickListener {
-            type=1
-            openAlbum()
+
         }
         mBinding.ivSwitch.setOnClickListener {
             releaseCamera()
@@ -110,19 +96,16 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         }
 
 
-        //监听点击事件进行手动对焦
         mBinding.surfaceView.setOnTouchListener { _, motionEvent ->
-            val areaX = (motionEvent.x / mBinding.surfaceView.width * 2000) - 1000 // 获取映射区域的X坐标
-            val areaY = (motionEvent.y / mBinding.surfaceView.height * 2000) - 1000 // 获取映射区域的Y坐标
+            val areaX = (motionEvent.x / mBinding.surfaceView.width * 2000) - 1000
+            val areaY = (motionEvent.y / mBinding.surfaceView.height * 2000) - 1000
 
-            // 创建Rect区域
             val focusArea = Rect()
-            focusArea.left = (areaX.toInt() - 100).coerceAtLeast(-1000) // 取最大或最小值，避免范围溢出屏幕坐标
+            focusArea.left = (areaX.toInt() - 100).coerceAtLeast(-1000)
             focusArea.top = (areaY.toInt() - 100).coerceAtLeast(-1000)
             focusArea.right = (areaX.toInt() + 100).coerceAtMost(1000)
             focusArea.bottom = (areaY.toInt() + 100).coerceAtMost(1000)
 
-            // 创建Camera.Area
             val cameraArea = Camera.Area(focusArea, 1000)
             val meteringAreas: MutableList<Camera.Area> = ArrayList()
             val focusAreas: MutableList<Camera.Area> = ArrayList()
@@ -131,15 +114,15 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
                     meteringAreas.add(cameraArea)
                     focusAreas.add(cameraArea)
                 }
-                it.focusMode = Camera.Parameters.FOCUS_MODE_AUTO // 设置对焦模式
-                it.focusAreas = focusAreas // 设置对焦区域
-                it.meteringAreas = meteringAreas // 设置测光区域
+                it.focusMode = Camera.Parameters.FOCUS_MODE_AUTO
+                it.focusAreas = focusAreas
+                it.meteringAreas = meteringAreas
             }
             mCamera?.let {
                 try {
-                    it.cancelAutoFocus() // 每次对焦前，需要先取消对焦
-                    it.parameters = mParameters // 设置相机参数
-                    it.autoFocus(this) // 开启对焦
+                    it.cancelAutoFocus()
+                    it.parameters = mParameters
+                    it.autoFocus(this)
                 } catch (e:Exception) {
                 }
             }
@@ -148,9 +131,7 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         checkPremission()
     }
 
-    /**
-     * 检查权限
-     */
+
     private fun checkPremission() {
         if ( ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
             || ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
@@ -174,7 +155,7 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
             }
 
             override fun surfaceChanged(p0: SurfaceHolder, p1: Int, p2: Int, p3: Int) {
-                Log.e(TAG, "surfaceChanged" )
+                Log.e(TAG, "surfaceChanged $p2 - $p3" )
             }
 
             override fun surfaceDestroyed(p0: SurfaceHolder) {
@@ -193,26 +174,68 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
 
     }
 
-    /**
-     * 显示照片或视频
-     */
-    private fun showResult(uri: Uri?) {
-        uri?:return
-        Log.e(TAG, "showResult: $uri||| ${uri.path}" )
-        val intent =  Intent(this, ShowResultActivity::class.java)
-        intent.putExtra("type",type)
-        intent.putExtra("uri",uri.toString())
-        startActivity(intent)
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun openCamera() {
+        if (!hasCamera(lensFacing)) return
+        try {
+            mCamera=Camera.open(lensFacing)
+            mParameters= mCamera?.parameters
+
+            val previewSizes = ArrayList<Size> ()
+            mParameters?.supportedPreviewSizes?.forEach{
+                    previewSizes.add(Size(it.width, it.height))
+                    Log.e(TAG, "startPreview preview: ${it.width} * ${it.height}" )
+                }
+
+            val pictureSizes = ArrayList<Size> ()
+            mParameters?.supportedPictureSizes?.forEach{
+                pictureSizes.add(Size(it.width, it.height))
+                Log.e(TAG, "startPreview jpeg: ${it.width} * ${it.height}" )
+            }
+
+            val previewSize= CameraUtils.chooseSize(previewSizes.toTypedArray(),windowManager.defaultDisplay.height, windowManager.defaultDisplay.width, ratio.size, true)
+            val pictureSize= CameraUtils.chooseSize(pictureSizes.toTypedArray(),windowManager.defaultDisplay.height, windowManager.defaultDisplay.width, ratio.size, false)
+            mParameters?.setPictureSize(pictureSize.width,pictureSize.height)
+            mBinding.surfaceView.setAspectRatio(previewSize.width,previewSize.height)
+
+            Log.e(TAG, "startPreview bestPreviewSize: ${previewSize.width} * ${previewSize.height}" )
+            Log.e(TAG, "startPreview bestPictureSize: ${pictureSize.width} * ${pictureSize.height}" )
+
+            mParameters?.setRotation(getCameraDisplayOrientation())
+            mParameters?.focusMode = Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE
+            mCamera?.parameters=mParameters
+            mCamera?.setPreviewCallback(this)
+            mCamera?.setPreviewDisplay(mSurfaceHolder)
+            mCamera?.setDisplayOrientation(getCameraDisplayOrientation())
+            mCamera?.startPreview()
+        } catch (e: Exception) {
+            Log.e(TAG, "open fail ${e.message}" )
+        }
     }
 
-    /**
-     * 拍照回调
-     */
+
+    private fun hasCamera(lensFacing: Int): Boolean {
+        var info = Camera.CameraInfo()
+        var cameraNum=0
+        for (i in 0 until Camera.getNumberOfCameras()) {
+            Camera.getCameraInfo(i, info)
+            Log.e(TAG, "camera ID："+i+"--- ："+info.facing)
+            Log.e(TAG, "initCamera:id $i" )
+            Log.e(TAG, "initCamera:facing ${info.facing}" )
+            if (info.facing ==lensFacing){
+                cameraNum++
+            }
+        }
+        return cameraNum>0
+    }
+
+
     override fun onPictureTaken(p0: ByteArray?, p1: Camera?) {
         p1?.startPreview()
-        getOutputMediaFile()
+
         try {
-            val fos = FileOutputStream(mediaFile)
+            val fos = FileOutputStream(getOutputMediaFile("jpeg"))
             fos.write(p0)
             fos.close()
         } catch (e: FileNotFoundException) {
@@ -220,50 +243,23 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
         } catch (e: IOException) {
             Log.d(TAG, "Error accessing file: ${e.message}")
         }
-        showResult(Uri.fromFile(mediaFile))
     }
 
 
-    /**
-     * 打开相册
-     */
-    private fun openAlbum() {
-        val intent = Intent(Intent.ACTION_PICK ,MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-        intent.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*")
 
-//        打开文件管理器筛选图片
-//        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
-//        intent.addCategory(Intent.CATEGORY_OPENABLE)
-//        intent.type = "image/*"
-
-        activityLuncher.launch(intent)
-    }
-
-    private val activityLuncher=registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        if (it.data != null && it.resultCode == Activity.RESULT_OK) {
-            showResult(it.data?.data)
-        } else {
-
-        }
-    }
-
-    /**
-     * 录制视频
-     */
     private fun startRecording() {
 
-        getOutputMediaFile()
         mediaRecorder = MediaRecorder()
         mCamera?.let{
             it.unlock()
             mediaRecorder?.run {
                 setCamera(mCamera)
-                mParameters?.supportedVideoSizes?.forEach {  cameraSize ->
-                    Log.e(TAG, "openCamera:支持的录制尺寸 ${cameraSize.height}* ${cameraSize.width}" )
+                mParameters?.supportedVideoSizes?.forEach {
+                    Log.e(TAG, "startRecording media: ${it.width} * ${it.height}" )
                 }
                 setAudioSource(MediaRecorder.AudioSource.CAMCORDER)
                 setVideoSource(MediaRecorder.VideoSource.CAMERA)
-                setOutputFile(mediaFile?.absolutePath)
+                setOutputFile(getOutputMediaFile("mp4"))
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.FROYO) {
                     setProfile(CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH))
                 }else{
@@ -276,7 +272,13 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
                 try {
                     prepare()
                     start()
-                    videoStatus=true
+
+                    mBinding.tvTips.visibility= View.VISIBLE
+                    mBinding.ivAlbum.visibility= View.GONE
+                    mBinding.ivSwitch.visibility= View.GONE
+                    mode = CameraConfig.CameraMode.VIDEO
+                    videoStatus=CameraConfig.VideoState.RECORDING
+
                 } catch (e: IllegalStateException) {
                     Log.e(TAG, "IllegalStateException preparing MediaRecorder: " + e.message)
                     releaseMediaRecorder()
@@ -291,116 +293,41 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
 
     }
 
+    private fun stopRecording() {
+        mediaRecorder?.stop()
+        releaseMediaRecorder()
 
-    /**
-     * 设置保存位置
-     */
-    private fun getOutputMediaFile(){
+        mBinding.tvTips.visibility= View.GONE
+        mBinding.ivAlbum.visibility= View.VISIBLE
+        mBinding.ivSwitch.visibility= View.VISIBLE
+        mode = CameraConfig.CameraMode.PHOTO
+        videoStatus=CameraConfig.VideoState.PREVIEW
+
+    }
+
+
+    private fun getOutputMediaFile(format: String): File{
         val mediaStorageDir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-            "Camera"
+            "CameraBasic" + File.separator + "Camera"
         )
         mediaStorageDir.apply {
             if (!exists()) {
                 if (!mkdirs()) {
                     Log.e(TAG, "failed to create directory")
-                    return
+                    return mediaStorageDir
                 }
             }
         }
         val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss").format(Date())
-        mediaFile = if(type==1) {
-            File(
-                mediaStorageDir.path + File.separator +
-                        "camera_${timeStamp}.jpg"
-            )
-        }else{
-            File(
-                mediaStorageDir.path + File.separator +
-                        "camera_video_${timeStamp}.mp4"
-            )
-        }
+        return File(
+            mediaStorageDir.path + File.separator +
+                    "camera_${format}_${timeStamp}.${format}"
+        )
     }
 
 
-    /**
-     * 初始化相机
-     */
-    @SuppressLint("ClickableViewAccessibility")
-    private fun openCamera() {
-        if (!hasCamera(lensFacing)) return
-        try {
-            mCamera=Camera.open(lensFacing)
-            mParameters= mCamera?.parameters
-            val previewSize=mParameters
-                ?.supportedPreviewSizes
-                ?.maxByOrNull { it.width *it.height }!!
-            var size=Size(previewSize.width,previewSize.height)
-            var diff= 1.0
-            mParameters?.supportedPreviewSizes?.forEach {
-                val previewRatio=it.height.toDouble() /it.width//获取到的宽高是反的
-                val surfaceRatio= mBinding.surfaceView.width.toDouble()/mBinding.surfaceView.height
-                val value=previewRatio-surfaceRatio
-                Log.e(TAG, "openCamera:支持的预览尺寸 ${it.height}* ${it.width}" )
-                if(value>0&&value<diff){
-                    diff=value
-                    size= Size(it.width, it.height)
-                }
-            }
-            mParameters?.supportedPictureSizes?.forEach {
-                Log.e(TAG, "openCamera:支持的照片尺寸 ${it.height}* ${it.width}" )
-            }
-            mBinding.surfaceView.setAspectRatio(size.width,size.height)
-            mParameters?.focusMode = Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE
-            mParameters?.setPictureSize(size.width,size.height)
-            mParameters?.setRotation(getCameraDisplayOrientation())
-//            闪光灯配置，Parameters.getFlashMode()。
-//            Camera.Parameters.FLASH_MODE_AUTO 自动模式，当光线较暗时自动打开闪光灯；
-//            Camera.Parameters.FLASH_MODE_OFF 关闭闪光灯；
-//            Camera.Parameters.FLASH_MODE_ON 拍照时闪光灯；
-//            Camera.Parameters.FLASH_MODE_RED_EYE 闪光灯参数，防红眼模式。
-//            对焦模式配置，Parameters.getFocusMode()。
-//            Camera.Parameters.FOCUS_MODE_AUTO 自动对焦模式；
-//            Camera.Parameters.FOCUS_MODE_FIXED 固定焦距模式；
-//            Camera.Parameters.FOCUS_MODE_EDOF 景深模式；
-//            Camera.Parameters.FOCUS_MODE_INFINITY 远景模式；
-//            Camera.Parameters.FOCUS_MODE_MACRO 微焦模式；
-//            场景模式配置，Parameters.getSceneMode()。
-//            Camera.Parameters.SCENE_MODE_BARCODE 扫描条码场景，NextQRCode项目会判断并设置为这个场景；
-//            Camera.Parameters.SCENE_MODE_ACTION 动作场景，抓拍用的；
-//            Camera.Parameters.SCENE_MODE_AUTO 自动选择场景；
-//            Camera.Parameters.SCENE_MODE_HDR 高动态对比度场景，拍摄晚霞等明暗分明的照片；
-//            Camera.Parameters.SCENE_MODE_NIGHT 夜间场景；
-            mCamera?.parameters=mParameters
-            mCamera?.setPreviewCallback(this)
-            mCamera?.setPreviewDisplay(mSurfaceHolder)
-            mCamera?.setDisplayOrientation(getCameraDisplayOrientation())
-            mCamera?.startPreview()
-        } catch (e: Exception) {
-            Log.e(TAG, "打开相机失败${e.message}" )
-        }
-    }
 
-    /**
-     * 获取相机ID  也可在此设置需要的ID
-     */
-    private fun hasCamera(lensFacing: Int): Boolean {
-        var info = Camera.CameraInfo()
-        var cameraNum=0
-        for (i in 0 until Camera.getNumberOfCameras()) {
-            Camera.getCameraInfo(i, info)
-            Log.e(TAG, "当前摄像头ID："+i+"---位置："+info.facing)
-            if (info.facing ==lensFacing){
-                cameraNum++
-            }
-        }
-        return cameraNum>0
-    }
-
-
-    /**
-     * 获取旋转角度
-     */
     private fun getCameraDisplayOrientation():Int{
         val info = Camera.CameraInfo()
         Camera.getCameraInfo(lensFacing, info)

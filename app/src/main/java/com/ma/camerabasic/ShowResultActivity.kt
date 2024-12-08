@@ -1,13 +1,10 @@
-package com.ma.cameraxcustom
+package com.ma.camerabasic
 
 import android.net.Uri
-import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
-import android.view.View
 import android.widget.MediaController
 import androidx.core.view.isGone
-import com.ma.cameraxcustom.databinding.ActivityCameraxBinding
-import com.ma.cameraxcustom.databinding.ActivityShowResultBinding
+import com.ma.camerabasic.databinding.ActivityShowResultBinding
 
 class ShowResultActivity : BaseActivity<ActivityShowResultBinding>() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -18,9 +15,9 @@ class ShowResultActivity : BaseActivity<ActivityShowResultBinding>() {
     }
 
     override fun initView() {
-        val type=intent.getIntExtra("type",1)
+        val type=intent.getIntExtra("type",0)
         val uri=Uri.parse(intent.getStringExtra("uri"))
-        if(type==1){
+        if(type==0){
             mBinding.ivPhoto.isGone=false
             mBinding.videoView.isGone=true
             showPhoto(uri)

@@ -1,6 +1,5 @@
-package com.ma.cameraxcustom
+package com.ma.camerabasic
 
-import android.os.Build
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.view.View

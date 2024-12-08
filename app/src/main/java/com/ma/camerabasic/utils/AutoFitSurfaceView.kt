@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.ma.cameraxcustom.utils
+package com.ma.camerabasic.utils
 
 import android.content.Context
 import android.util.AttributeSet
@@ -61,11 +61,11 @@ class AutoFitSurfaceView @JvmOverloads constructor(
             val newHeight: Int
             val actualRatio = if (width > height) aspectRatio else 1f / aspectRatio
             if (width < height * actualRatio) {
-                newHeight = height
-                newWidth = (height * actualRatio).roundToInt()
-            } else {
                 newWidth = width
                 newHeight = (width / actualRatio).roundToInt()
+            } else {
+                newHeight = height
+                newWidth = (height * actualRatio).roundToInt()
             }
 
             Log.d(TAG, "Measured dimensions set: $newWidth x $newHeight")

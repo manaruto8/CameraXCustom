@@ -8,7 +8,7 @@ android {
     buildToolsVersion "32.0.0"
 
     defaultConfig {
-        applicationId "com.ma.cameraxcustom"
+        applicationId "com.ma.camerabasic"
         minSdkVersion 21
         targetSdkVersion 32
         versionCode 1

@@ -1,10 +1,8 @@
-package com.ma.cameraxcustom
+package com.ma.camerabasic
 
 import android.content.Intent
-import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
-import com.ma.cameraxcustom.databinding.ActivityCameraxBinding
-import com.ma.cameraxcustom.databinding.ActivitySelectCameraBinding
+import com.ma.camerabasic.databinding.ActivitySelectCameraBinding
 
 class SelectCameraActivity : BaseActivity<ActivitySelectCameraBinding>() {
     override fun onCreate(savedInstanceState: Bundle?) {

@@ -1,4 +1,4 @@
-package com.mstchina.cameraxcustom
+package com.mstchina.camerabasic
 
 import org.junit.Test
 
