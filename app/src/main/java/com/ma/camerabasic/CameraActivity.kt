@@ -203,6 +203,7 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
             val previewSize= CameraUtils.chooseSize(previewSizes.toTypedArray(),windowManager.defaultDisplay.height, windowManager.defaultDisplay.width, ratio.size, true)
             val pictureSize= CameraUtils.chooseSize(pictureSizes.toTypedArray(),windowManager.defaultDisplay.height, windowManager.defaultDisplay.width, ratio.size, false)
             mParameters?.setPictureSize(pictureSize.width,pictureSize.height)
+            mParameters?.setPreviewSize(previewSize.width,previewSize.height)
             mBinding.surfaceView.setAspectRatio(previewSize.width,previewSize.height)
 
             Log.e(TAG, "startPreview bestPreviewSize: ${previewSize.width} * ${previewSize.height}" )
