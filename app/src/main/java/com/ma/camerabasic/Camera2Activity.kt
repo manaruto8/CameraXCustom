@@ -239,9 +239,9 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
                         flashMode = CameraMetadata.FLASH_MODE_OFF
                         flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON
                         flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE
-                        creatPreviewCapture()
                     }
                 }
+                creatPreviewCapture()
             }
 
             override fun onTabUnselected(tab: TabLayout.Tab?) {
@@ -521,14 +521,7 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     }
 
     private fun creatPreviewCapture(){
-        if (characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
-            && mode == CameraConfig.CameraMode.PHOTO) {
-            mBinding.tvFlash.text = "自动"
-            setFlashDrawable(R.drawable.ic_flash_auto)
-            flashMode = CameraMetadata.FLASH_MODE_SINGLE
-            flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON_AUTO_FLASH
-            flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_START
-        } else {
+        if (characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) != true) {
             mBinding.tvFlash.text = "关闭"
             setFlashDrawable(R.drawable.ic_flash_off)
             flashMode = CameraMetadata.FLASH_MODE_OFF

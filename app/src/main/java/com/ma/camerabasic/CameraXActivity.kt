@@ -5,7 +5,6 @@ import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
-import android.hardware.camera2.CameraMetadata
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -13,7 +12,6 @@ import android.provider.MediaStore
 import android.util.Log
 import android.util.Size
 import android.view.*
-import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
 import androidx.camera.camera2.interop.Camera2CameraInfo
@@ -24,6 +22,8 @@ import androidx.camera.core.ImageCapture.FLASH_MODE_ON
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.*
 import androidx.camera.video.VideoCapture
+import androidx.camera.view.PreviewView
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.ContextCompat
 import androidx.core.util.Consumer
 import androidx.lifecycle.LifecycleOwner
@@ -36,10 +36,10 @@ import com.ma.camerabasic.utils.CameraUtils
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
+
 
 class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
 
@@ -115,14 +115,14 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
                 mBinding.tvFlash.text = "常亮"
                 setFlashDrawable(R.drawable.ic_flash_light)
                 camera?.cameraControl?.enableTorch(true)
-                4
+                -1
             } else {
                 mBinding.tvFlash.text = "关闭"
                 setFlashDrawable(R.drawable.ic_flash_off)
                 camera?.cameraControl?.enableTorch(false)
                 FLASH_MODE_OFF
             }
-            if (flashMode != 4) {
+            if (flashMode != -1) {
                 imageCapture?.flashMode = flashMode
             }
         }
@@ -132,7 +132,7 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
                 AspectRatio.RATIO_16_9
             } else if (ratio == AspectRatio.RATIO_16_9) {
                 mBinding.tvRatio.text = "全屏"
-                2
+                -1
             }else {
                 mBinding.tvRatio.text = "4:3"
                 AspectRatio.RATIO_4_3
@@ -219,7 +219,7 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
 
         val selector = selectExternalOrBestCamera(cameraProvider)
 
-        if (ratio != 2 ) {
+        if (ratio != -1 ) {
             preview = Preview.Builder()
                 .setTargetRotation(mBinding.cameraPreview.display.rotation)
                 .setTargetAspectRatio(ratio)
@@ -270,9 +270,9 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
         preview?.setSurfaceProvider(mBinding.cameraPreview.surfaceProvider)
         cameraProvider?.unbindAll()
         camera=cameraProvider?.bindToLifecycle(this as LifecycleOwner, cameraSelector,imageCapture,videoCapture, preview)
-        camera?.cameraInfo?.let { Camera2CameraInfo.from(it) }
 
-        mBinding.ivSwitch.isEnabled = hasBackCamera() && hasFrontCamera()
+        Log.e(TAG, "bindPreview  ${mBinding.cameraPreview.width}  ${mBinding.cameraPreview.height}" )
+
     }
 
 
