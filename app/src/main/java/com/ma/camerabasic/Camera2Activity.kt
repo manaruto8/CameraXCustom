@@ -222,25 +222,18 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
                     mode = CameraConfig.CameraMode.PHOTO
                     mBinding.ivCamera.setImageResource(R.drawable.ic_camera)
 
-                    if (characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true) {
-                        mBinding.tvFlash.text = "自动"
-                        setFlashDrawable(R.drawable.ic_flash_auto)
-                        flashMode = CameraMetadata.FLASH_MODE_SINGLE
-                        flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON_AUTO_FLASH
-                        flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_START
-                    }
                 } else {
                     mode = CameraConfig.CameraMode.VIDEO
                     mBinding.ivCamera.setImageResource(R.drawable.ic_video)
 
-                    if (characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true) {
-                        mBinding.tvFlash.text = "关闭"
-                        setFlashDrawable(R.drawable.ic_flash_off)
-                        flashMode = CameraMetadata.FLASH_MODE_OFF
-                        flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON
-                        flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE
-                    }
                 }
+
+                mBinding.tvFlash.text = "关闭"
+                setFlashDrawable(R.drawable.ic_flash_off)
+                flashMode = CameraMetadata.FLASH_MODE_OFF
+                flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON
+                flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE
+
                 creatPreviewCapture()
             }
 
@@ -517,10 +510,6 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
 
         mSession = createCaptureSession(mCamera, targets, cameraHandler)
 
-        creatPreviewCapture()
-    }
-
-    private fun creatPreviewCapture(){
         if (characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) != true) {
             mBinding.tvFlash.text = "关闭"
             setFlashDrawable(R.drawable.ic_flash_off)
@@ -528,6 +517,11 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
             flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON
             flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE
         }
+
+        creatPreviewCapture()
+    }
+
+    private fun creatPreviewCapture(){
 
         captureRequest = mCamera.createCaptureRequest(
             CameraDevice.TEMPLATE_PREVIEW

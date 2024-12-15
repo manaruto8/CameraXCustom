@@ -152,20 +152,16 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
                 if (position == 0) {
                     mode = CameraConfig.CameraMode.PHOTO
                     mBinding.ivCamera.setImageResource(R.drawable.ic_camera)
-                    if (mParameters?.supportedFlashModes?.contains(Camera.Parameters.FLASH_MODE_AUTO) == true) {
-                        mBinding.tvFlash.text = "自动"
-                        setFlashDrawable(R.drawable.ic_flash_auto)
-                        flashMode = Camera.Parameters.FLASH_MODE_AUTO
-                    }
+
                 } else {
                     mode = CameraConfig.CameraMode.VIDEO
                     mBinding.ivCamera.setImageResource(R.drawable.ic_video)
-                    if (mParameters?.supportedFlashModes?.contains(Camera.Parameters.FLASH_MODE_AUTO) == true) {
-                        mBinding.tvFlash.text = "关闭"
-                        setFlashDrawable(R.drawable.ic_flash_off)
-                        flashMode = Camera.Parameters.FLASH_MODE_OFF
-                    }
+
                 }
+
+                mBinding.tvFlash.text = "关闭"
+                setFlashDrawable(R.drawable.ic_flash_off)
+                flashMode = Camera.Parameters.FLASH_MODE_OFF
 
                 mParameters?.flashMode=flashMode
                 mCamera?.parameters=mParameters
@@ -272,16 +268,10 @@ class CameraActivity : BaseActivity<ActivityCameraBinding>(),Camera.PreviewCallb
             Log.e(TAG, "initCamera:select id ${lensFacing}" )
             mCamera=Camera.open(lensFacing)
             mParameters= mCamera?.parameters
-            if (mParameters?.supportedFlashModes?.contains(Camera.Parameters.FLASH_MODE_ON) == true
-                && mode == CameraConfig.CameraMode.PHOTO) {
-                mBinding.tvFlash.text = "自动"
-                setFlashDrawable(R.drawable.ic_flash_auto)
-                mParameters?.flashMode = Camera.Parameters.FLASH_MODE_AUTO
-            } else {
-                mBinding.tvFlash.text = "关闭"
-                setFlashDrawable(R.drawable.ic_flash_off)
-                mParameters?.flashMode = Camera.Parameters.FLASH_MODE_OFF
-            }
+
+            mBinding.tvFlash.text = "关闭"
+            setFlashDrawable(R.drawable.ic_flash_off)
+            mParameters?.flashMode = Camera.Parameters.FLASH_MODE_OFF
 
             val previewSizes = ArrayList<Size> ()
             mParameters?.supportedPreviewSizes?.forEach{
