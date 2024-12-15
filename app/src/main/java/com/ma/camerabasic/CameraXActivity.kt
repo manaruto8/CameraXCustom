@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraMetadata
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -12,18 +13,29 @@ import android.provider.MediaStore
 import android.util.Log
 import android.util.Size
 import android.view.*
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.core.*
+import androidx.camera.core.ImageCapture.FLASH_MODE_AUTO
+import androidx.camera.core.ImageCapture.FLASH_MODE_OFF
+import androidx.camera.core.ImageCapture.FLASH_MODE_ON
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.*
 import androidx.camera.video.VideoCapture
 import androidx.core.content.ContextCompat
 import androidx.core.util.Consumer
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.lifecycleScope
+import com.google.android.material.tabs.TabLayout
+import com.google.android.material.tabs.TabLayout.OnTabSelectedListener
 import com.ma.camerabasic.databinding.ActivityCameraxBinding
 import com.ma.camerabasic.utils.CameraConfig
 import com.ma.camerabasic.utils.CameraUtils
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -32,10 +44,13 @@ import java.util.concurrent.TimeUnit
 class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
 
     private var lensFacing: Int = CameraSelector.LENS_FACING_BACK
+    private var flashMode = FLASH_MODE_OFF
+    private var preview: Preview? = null;
     private var imageCapture: ImageCapture? =null
     private var videoCapture: VideoCapture<Recorder>?=null
     private var currentRecording: Recording? = null
     private var camera: Camera? = null
+    private var ratio = AspectRatio.RATIO_4_3
     private var cameraProvider: ProcessCameraProvider? = null
     private var videoStatus = CameraConfig.VideoState.PREVIEW
     private var mode = CameraConfig.CameraMode.PHOTO
@@ -51,22 +66,18 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
     }
 
 
+    @SuppressLint("ClickableViewAccessibility")
     override fun initView() {
         mBinding.ivCamera.setOnClickListener {
             if(mode == CameraConfig.CameraMode.PHOTO) {
                 takePicture()
-            } else if (mode == CameraConfig.CameraMode.VIDEO
-                && videoStatus == CameraConfig.VideoState.RECORDING){
-                stopRecording()
+            } else if (mode == CameraConfig.CameraMode.VIDEO){
+                if(videoStatus == CameraConfig.VideoState.PREVIEW) {
+                    startRecording()
+                } else {
+                    stopRecording()
+                }
             }
-        }
-        mBinding.ivCamera.setOnLongClickListener() {
-            if(videoStatus == CameraConfig.VideoState.PREVIEW) {
-                startRecording()
-            } else {
-                stopRecording()
-            }
-            true
         }
         mBinding.ivAlbum.setOnClickListener {
             if (uri != null) {
@@ -83,10 +94,83 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
             }
             openCamera()
         }
-        mBinding.ivFlash.setOnClickListener {
-            camera?.cameraControl?.enableTorch(camera?.cameraInfo?.torchState?.value != TorchState.ON)
+        mBinding.tvFlash.setOnClickListener {
+            flashMode = if (flashMode == FLASH_MODE_OFF) {
+                if (mode == CameraConfig.CameraMode.PHOTO) {
+                    mBinding.tvFlash.text = "自动"
+                    setFlashDrawable(R.drawable.ic_flash_auto)
+                    FLASH_MODE_AUTO
+                } else {
+                    mBinding.tvFlash.text = "常亮"
+                    setFlashDrawable(R.drawable.ic_flash_light)
+                    camera?.cameraControl?.enableTorch(true)
+                    4
+                }
+
+            } else if (flashMode == FLASH_MODE_AUTO) {
+                mBinding.tvFlash.text = "开启"
+                setFlashDrawable(R.drawable.ic_flash_on)
+                FLASH_MODE_ON
+            } else if (flashMode == FLASH_MODE_ON) {
+                mBinding.tvFlash.text = "常亮"
+                setFlashDrawable(R.drawable.ic_flash_light)
+                camera?.cameraControl?.enableTorch(true)
+                4
+            } else {
+                mBinding.tvFlash.text = "关闭"
+                setFlashDrawable(R.drawable.ic_flash_off)
+                camera?.cameraControl?.enableTorch(false)
+                FLASH_MODE_OFF
+            }
+            if (flashMode != 4) {
+                imageCapture?.flashMode = flashMode
+            }
         }
+        mBinding.tvRatio.setOnClickListener {
+            ratio = if (ratio == AspectRatio.RATIO_4_3) {
+                mBinding.tvRatio.text = "16:9"
+                AspectRatio.RATIO_16_9
+            } else if (ratio == AspectRatio.RATIO_16_9) {
+                mBinding.tvRatio.text = "全屏"
+                2
+            }else {
+                mBinding.tvRatio.text = "4:3"
+                AspectRatio.RATIO_4_3
+            }
+            bindPreview()
+        }
+        mBinding.tlMode.addOnTabSelectedListener(object: OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab?) {
+                val position = tab?.position
+                if (position == 0) {
+                    mode = CameraConfig.CameraMode.PHOTO
+                    mBinding.ivCamera.setImageResource(R.drawable.ic_camera)
+
+
+
+                } else {
+                    mode = CameraConfig.CameraMode.VIDEO
+                    mBinding.ivCamera.setImageResource(R.drawable.ic_video)
+
+
+                }
+            }
+
+            override fun onTabUnselected(tab: TabLayout.Tab?) {
+
+            }
+
+            override fun onTabReselected(tab: TabLayout.Tab?) {
+
+            }
+
+        } )
         mBinding.cameraPreview.setOnTouchListener { _, motionEvent ->
+
+            runBlocking {
+                showFocus(motionEvent.x, motionEvent.y)
+            }
+
             val meteringPoint = mBinding.cameraPreview.meteringPointFactory
                 .createPoint(motionEvent.x, motionEvent.y)
             val action = FocusMeteringAction.Builder(meteringPoint)
@@ -125,26 +209,39 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
     }
 
 
+    @SuppressLint("UnsafeOptInUsageError")
     private fun bindPreview() {
         val d=resources.displayMetrics
 
-        //预览设置
-        val preview = Preview.Builder()
-            .setTargetRotation(mBinding.cameraPreview.display.rotation)
-            .build()
         val cameraSelector = CameraSelector.Builder()
             .requireLensFacing(lensFacing)
             .build()
 
         val selector = selectExternalOrBestCamera(cameraProvider)
 
+        if (ratio != 2 ) {
+            preview = Preview.Builder()
+                .setTargetRotation(mBinding.cameraPreview.display.rotation)
+                .setTargetAspectRatio(ratio)
+                .build()
 
-        imageCapture = ImageCapture.Builder()
-            .setTargetResolution(Size(d.widthPixels,d.heightPixels))
-            //.setTargetAspectRatio(RATIO_4_3)
-            .setTargetRotation(mBinding.cameraPreview.display.rotation)
-            .build()
-        Log.e(TAG, "bindPreview ${d.widthPixels}---${d.heightPixels}" )
+            imageCapture = ImageCapture.Builder()
+                .setTargetRotation(mBinding.cameraPreview.display.rotation)
+                .setTargetAspectRatio(ratio)
+                .setFlashMode(flashMode)
+                .build()
+        } else {
+            preview = Preview.Builder()
+                .setTargetRotation(mBinding.cameraPreview.display.rotation)
+                .setTargetResolution(Size(d.widthPixels,d.heightPixels))
+                .build()
+
+            imageCapture = ImageCapture.Builder()
+                .setTargetRotation(mBinding.cameraPreview.display.rotation)
+                .setTargetResolution(Size(d.widthPixels,d.heightPixels))
+                .setFlashMode(flashMode)
+                .build()
+        }
 
 
         val qualitySelector = QualitySelector.fromOrderedList(
@@ -166,13 +263,14 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
                     else -> Surface.ROTATION_0
                 }
                 imageCapture?.targetRotation = rotation
-                videoCapture?.targetRotation=rotation
+                videoCapture?.targetRotation = rotation
             }
         }
         orientationEventListener.enable()
-        preview.setSurfaceProvider(mBinding.cameraPreview.surfaceProvider)
+        preview?.setSurfaceProvider(mBinding.cameraPreview.surfaceProvider)
         cameraProvider?.unbindAll()
         camera=cameraProvider?.bindToLifecycle(this as LifecycleOwner, cameraSelector,imageCapture,videoCapture, preview)
+        camera?.cameraInfo?.let { Camera2CameraInfo.from(it) }
 
         mBinding.ivSwitch.isEnabled = hasBackCamera() && hasFrontCamera()
     }
@@ -234,7 +332,10 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
         mBinding.tvTips.visibility= View.VISIBLE
         mBinding.ivAlbum.visibility= View.GONE
         mBinding.ivSwitch.visibility= View.GONE
-        mode = CameraConfig.CameraMode.VIDEO
+        mBinding.tlMode.visibility= View.GONE
+        mBinding.llTop.visibility= View.GONE
+        mBinding.ivCamera.setImageResource(R.drawable.ic_video_stop)
+
         videoStatus=CameraConfig.VideoState.RECORDING
     }
 
@@ -246,7 +347,9 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
         mBinding.tvTips.visibility= View.GONE
         mBinding.ivAlbum.visibility= View.VISIBLE
         mBinding.ivSwitch.visibility= View.VISIBLE
-        mode = CameraConfig.CameraMode.PHOTO
+        mBinding.tlMode.visibility= View.VISIBLE
+        mBinding.llTop.visibility= View.VISIBLE
+        mBinding.ivCamera.setImageResource(R.drawable.ic_video)
         videoStatus=CameraConfig.VideoState.PREVIEW
     }
 
@@ -308,6 +411,25 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
             }
             else -> null
         }
+    }
+
+    val job = lifecycleScope.launch {
+        delay(3000)
+        mBinding.ivFocus.visibility = View.INVISIBLE
+    }
+
+    private suspend fun showFocus(x: Float, y: Float) {
+        job.cancel()
+        mBinding.ivFocus.visibility = View.VISIBLE
+        mBinding.ivFocus.x = x - mBinding.ivFocus.width / 2
+        mBinding.ivFocus.y = mBinding.cameraPreview.top + y - mBinding.ivFocus.height / 2
+        job.join()
+    }
+
+    private fun setFlashDrawable(@DrawableRes res: Int){
+        val drawable = ContextCompat.getDrawable(this, res)
+        drawable?.setBounds(0, 0, drawable.minimumWidth, drawable.minimumHeight)
+        mBinding.tvFlash.setCompoundDrawables(null,drawable,null,null)
     }
 
     private fun hasBackCamera(): Boolean {

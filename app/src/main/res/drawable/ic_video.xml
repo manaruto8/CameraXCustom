@@ -19,7 +19,7 @@
     android:height="24dp"
     android:viewportWidth="74"
     android:viewportHeight="74">
-    <path android:fillColor="#00000000" android:fillType="evenOdd"
+    <path android:fillColor="#CFD7DB" android:fillType="evenOdd"
         android:pathData="M73.1,37C73.1,17.0637 56.9373,0.9 37,0.9C17.0627,0.9 0.9,17.0637 0.9,37C0.9,56.9373 17.0627,73.1 37,73.1C56.9373,73.1 73.1,56.9373 73.1,37"
         android:strokeColor="#FFFFFFFF" android:strokeWidth="1"/>
     <path android:fillColor="#FFFF0000" android:fillType="evenOdd"

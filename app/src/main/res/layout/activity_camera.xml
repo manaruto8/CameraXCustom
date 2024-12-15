@@ -52,14 +52,59 @@
         android:layout_marginRight="30dp"
         android:layout_marginBottom="30dp"/>
     />
+    <com.google.android.material.tabs.TabLayout
+        android:id="@+id/tl_mode"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="@color/mask"
+        android:layout_above="@+id/iv_camera"
+        android:layout_centerHorizontal="true"
+        android:layout_marginBottom="20dp"
+        app:tabSelectedTextColor="@color/white"
+        app:tabTextColor="@color/hint">
+        <com.google.android.material.tabs.TabItem
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="拍照"
+            />
+        <com.google.android.material.tabs.TabItem
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="录像"/>
+    </com.google.android.material.tabs.TabLayout>
+    <LinearLayout
+        android:id="@+id/ll_top"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+        <TextView
+            android:id="@+id/tv_flash"
+            android:layout_width="30dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="30dp"
+            android:layout_marginLeft="30dp"
+            android:gravity="center"
+            android:drawableTop="@drawable/ic_flash_off"
+            android:text="关闭"
+            android:textColor="@color/white"
+            />
+        <TextView
+            android:id="@+id/tv_ratio"
+            android:layout_width="30dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="30dp"
+            android:layout_marginLeft="30dp"
+            android:gravity="center"
+            android:drawableTop="@drawable/ic_ratio"
+            android:text="4:3"
+            android:textColor="@color/white"
+            />
+    </LinearLayout>
     <ImageView
-        android:visibility="gone"
-        android:id="@+id/iv_flash"
-        android:layout_width="60dp"
-        android:layout_height="60dp"
-        android:src="@drawable/ic_camera"
-        android:layout_alignParentTop="true"
-        android:layout_alignParentRight="true"
+        android:visibility="invisible"
+        android:id="@+id/iv_focus"
+        android:layout_width="50dp"
+        android:layout_height="50dp"
+        android:src="@drawable/ic_focus"
         />
     <TextView
         android:visibility="gone"

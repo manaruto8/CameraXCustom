@@ -4,7 +4,9 @@ import android.app.Activity
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
+import android.hardware.Camera
 import android.hardware.camera2.CameraCharacteristics
+import android.media.ExifInterface
 import android.media.Image
 import android.media.MediaMetadataRetriever
 import android.media.ThumbnailUtils
@@ -30,12 +32,11 @@ class CameraUtils {
         private val TAG = javaClass.simpleName
 
         fun computeRelativeRotation(
-            characteristics: CameraCharacteristics,
-            surfaceRotation: Int
+            sensorOrientationDegrees: Int,
+            surfaceRotation: Int,
+            mirrored: Boolean
         ): Int {
-            val sensorOrientationDegrees =
-                characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION)!!
-
+            Log.e(TAG, "computeRelativeRotation sensorOrientationDegrees = $sensorOrientationDegrees   surfaceRotation = $surfaceRotation  mirrored = $mirrored" )
             val deviceOrientationDegrees = when (surfaceRotation) {
                 Surface.ROTATION_0 -> 0
                 Surface.ROTATION_90 -> 90
@@ -44,8 +45,7 @@ class CameraUtils {
                 else -> 0
             }
 
-            val sign = if (characteristics.get(CameraCharacteristics.LENS_FACING) ==
-                CameraCharacteristics.LENS_FACING_FRONT) 1 else -1
+            val sign = if (mirrored) 1 else -1
             val degress = (sensorOrientationDegrees - (deviceOrientationDegrees * sign) + 360) % 360
 
 //            Log.e(TAG, "computeRelativeRotation sensorOrientationDegrees $sensorOrientationDegrees")
@@ -53,6 +53,20 @@ class CameraUtils {
 //            Log.e(TAG, "computeRelativeRotation degress $degress")
 
             return degress
+        }
+
+
+        fun computeExifOrientation(rotationDegrees: Int, mirrored: Boolean) = when {
+            rotationDegrees == 0 && !mirrored -> ExifInterface.ORIENTATION_NORMAL
+            rotationDegrees == 0 && mirrored -> ExifInterface.ORIENTATION_FLIP_HORIZONTAL
+            rotationDegrees == 180 && !mirrored -> ExifInterface.ORIENTATION_ROTATE_180
+            rotationDegrees == 180 && mirrored -> ExifInterface.ORIENTATION_FLIP_VERTICAL
+            rotationDegrees == 270 && mirrored -> ExifInterface.ORIENTATION_TRANSVERSE
+            rotationDegrees == 90 && !mirrored -> ExifInterface.ORIENTATION_ROTATE_90
+            rotationDegrees == 90 && mirrored -> ExifInterface.ORIENTATION_TRANSPOSE
+            rotationDegrees == 270 && mirrored -> ExifInterface.ORIENTATION_ROTATE_270
+            rotationDegrees == 270 && !mirrored -> ExifInterface.ORIENTATION_TRANSVERSE
+            else -> ExifInterface.ORIENTATION_UNDEFINED
         }
 
 

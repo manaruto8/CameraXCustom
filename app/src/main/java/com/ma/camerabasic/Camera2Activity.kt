@@ -6,24 +6,33 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.*
+import android.hardware.Camera
 import android.hardware.camera2.*
+import android.hardware.camera2.CameraCaptureSession.CaptureCallback
+import android.hardware.camera2.params.MeteringRectangle
 import android.media.*
-import android.net.Uri
 import android.os.*
 import android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
 import android.util.Log
 import android.util.Range
 import android.util.Size
 import android.view.*
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toDrawable
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.tabs.TabLayout
+import com.google.android.material.tabs.TabLayout.OnTabSelectedListener
 import com.ma.camerabasic.databinding.ActivityCamera2Binding
 import com.ma.camerabasic.utils.CameraConfig
 import com.ma.camerabasic.utils.CameraUtils
+import com.ma.camerabasic.utils.CameraUtils.Companion
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import java.io.FileOutputStream
@@ -39,7 +48,7 @@ import kotlin.coroutines.suspendCoroutine
 class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
 
     /** Maximum number of images that will be held in the reader's buffer */
-    private val IMAGE_BUFFER_SIZE: Int = 3
+    private val IMAGE_BUFFER_SIZE: Int = 8
 
     /** Maximum time allowed to wait for the result of an image capture */
     private val IMAGE_CAPTURE_TIMEOUT_MILLIS: Long = 5000
@@ -72,13 +81,14 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     private val imageReaderThread = HandlerThread("imageReaderThread").apply { start() }
     private val imageReaderHandler = Handler(imageReaderThread.looper)
     private lateinit var mCamera: CameraDevice
-    private lateinit var mSession: CameraCaptureSession
+    private lateinit var  mSession: CameraCaptureSession
     private val cameraThread = HandlerThread("CameraThread").apply { start() }
     private val cameraHandler = Handler(cameraThread.looper)
     private lateinit var  mediaSurface:Surface
     private lateinit var mediaRecorder:MediaRecorder
     private var flashMode = CameraMetadata.FLASH_MODE_OFF
-    private var flashAEMode = CameraMetadata.CONTROL_AE_MODE_OFF
+    private var flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON
+    private var flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE
     private var cameraId=BACK_CAMERAID
     private lateinit var captureRequest:CaptureRequest.Builder
     private lateinit var previewSize:Size
@@ -92,6 +102,7 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     private var supportYUV: Boolean=false
     private var supportRAW: Boolean=false
     private var file: File? = null
+    private var preCaptureReady = false
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -102,22 +113,22 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     }
 
 
+    @SuppressLint("ClickableViewAccessibility")
     override fun initView() {
         mBinding.ivCamera.setOnClickListener {
             if(mode == CameraConfig.CameraMode.PHOTO) {
-                takePicture()
-            } else if (mode == CameraConfig.CameraMode.VIDEO
-                && videoStatus == CameraConfig.VideoState.RECORDING){
-                stopRecording()
+                if (flashMode == CameraMetadata.FLASH_MODE_SINGLE) {
+                    creatPreCapture()
+                } else {
+                    takePicture()
+                }
+            } else if (mode == CameraConfig.CameraMode.VIDEO){
+                if(videoStatus == CameraConfig.VideoState.PREVIEW) {
+                    startRecording()
+                } else {
+                    stopRecording()
+                }
             }
-        }
-        mBinding.ivCamera.setOnLongClickListener {
-            if(videoStatus == CameraConfig.VideoState.PREVIEW) {
-                startRecording()
-            } else {
-                stopRecording()
-            }
-            true
         }
         mBinding.ivAlbum.setOnClickListener {
             if (file != null) {
@@ -134,39 +145,147 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
                 BACK_CAMERAID
             }
             if (mCamera!=null){
-                mCamera.close()
-                initCamera()
+                resetCamera()
             }
         }
-        mBinding.ivFlash.setOnClickListener {
+        mBinding.tvFlash.setOnClickListener {
+            if (characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) != true) {
+                Toast.makeText(this@Camera2Activity, "不支持闪光灯", Toast.LENGTH_SHORT ).show()
+                return@setOnClickListener
+            }
             if(flashMode==CameraMetadata.FLASH_MODE_OFF){
-                flashMode = CameraMetadata.FLASH_MODE_SINGLE
-                flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON_AUTO_FLASH
+                if (mode == CameraConfig.CameraMode.PHOTO) {
+                    mBinding.tvFlash.text = "自动"
+                    setFlashDrawable(R.drawable.ic_flash_auto)
+                    flashMode = CameraMetadata.FLASH_MODE_SINGLE
+                    flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON_AUTO_FLASH
+                    flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_START
+                } else {
+                    mBinding.tvFlash.text = "常亮"
+                    setFlashDrawable(R.drawable.ic_flash_light)
+                    flashMode = CameraMetadata.FLASH_MODE_TORCH
+                    flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON
+                    flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE
+                    creatPreviewCapture()
+                }
 
             }else if(flashMode==CameraMetadata.FLASH_MODE_SINGLE
                 && flashAEMode == CameraMetadata.CONTROL_AE_MODE_ON_AUTO_FLASH){
+                mBinding.tvFlash.text = "开启"
+                setFlashDrawable(R.drawable.ic_flash_on)
                 flashMode = CameraMetadata.FLASH_MODE_SINGLE
                 flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON_ALWAYS_FLASH
+                flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_START
 
             }else if(flashMode==CameraMetadata.FLASH_MODE_SINGLE
                 && flashAEMode == CameraMetadata.CONTROL_AE_MODE_ON_ALWAYS_FLASH){
-                CameraMetadata.FLASH_MODE_TORCH
+                mBinding.tvFlash.text = "常亮"
+                setFlashDrawable(R.drawable.ic_flash_light)
+                flashMode = CameraMetadata.FLASH_MODE_TORCH
+                flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON
+                flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE
+                creatPreviewCapture()
 
             }else{
+                mBinding.tvFlash.text = "关闭"
+                setFlashDrawable(R.drawable.ic_flash_off)
                 flashMode = CameraMetadata.FLASH_MODE_OFF
-                flashAEMode = CameraMetadata.CONTROL_AE_MODE_OFF
+                flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON
+                flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE
+                creatPreviewCapture()
             }
-            captureRequest.set(CaptureRequest.FLASH_MODE, flashMode)
-            captureRequest.set(CaptureRequest.CONTROL_AE_MODE, flashAEMode)
-            mSession.setRepeatingRequest(captureRequest.build(), null, cameraHandler)
         }
+        mBinding.tvRatio.setOnClickListener {
+            ratio = if (ratio == CameraConfig.CameraRatio.RECTANGLE_4_3) {
+                mBinding.tvRatio.text = "16:9"
+                CameraConfig.CameraRatio.RECTANGLE_16_9
+            } else if (ratio == CameraConfig.CameraRatio.RECTANGLE_16_9) {
+                mBinding.tvRatio.text = "全屏"
+                CameraConfig.CameraRatio.FUll
+            } else if (ratio == CameraConfig.CameraRatio.FUll) {
+                mBinding.tvRatio.text = "1:1"
+                CameraConfig.CameraRatio.SQUARE
+            } else if (ratio == CameraConfig.CameraRatio.SQUARE) {
+                CameraConfig.CameraRatio.RECTANGLE_4_3
+                mBinding.tvRatio.text = "4:3"
+                CameraConfig.CameraRatio.RECTANGLE_4_3
+            } else {
+                mBinding.tvRatio.text = "4:3"
+                CameraConfig.CameraRatio.RECTANGLE_4_3
+            }
+            resetCamera()
+        }
+        mBinding.tlMode.addOnTabSelectedListener(object: OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab?) {
+                val position = tab?.position
+                if (position == 0) {
+                    mode = CameraConfig.CameraMode.PHOTO
+                    mBinding.ivCamera.setImageResource(R.drawable.ic_camera)
 
+                    if (characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true) {
+                        mBinding.tvFlash.text = "自动"
+                        setFlashDrawable(R.drawable.ic_flash_auto)
+                        flashMode = CameraMetadata.FLASH_MODE_SINGLE
+                        flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON_AUTO_FLASH
+                        flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_START
+                    }
+                } else {
+                    mode = CameraConfig.CameraMode.VIDEO
+                    mBinding.ivCamera.setImageResource(R.drawable.ic_video)
+
+                    if (characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true) {
+                        mBinding.tvFlash.text = "关闭"
+                        setFlashDrawable(R.drawable.ic_flash_off)
+                        flashMode = CameraMetadata.FLASH_MODE_OFF
+                        flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON
+                        flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE
+                        creatPreviewCapture()
+                    }
+                }
+            }
+
+            override fun onTabUnselected(tab: TabLayout.Tab?) {
+
+            }
+
+            override fun onTabReselected(tab: TabLayout.Tab?) {
+
+            }
+
+        } )
+        mBinding.textureView.setOnTouchListener { _, motionEvent ->
+
+            runBlocking {
+                showFocus(motionEvent.x, motionEvent.y)
+            }
+
+            val screenW = windowManager.defaultDisplay.width
+            val screenH = windowManager.defaultDisplay.height
+
+
+            var realPreviewWidth = previewSize.height
+            var realPreviewHeight = previewSize.width
+
+            val focusX = realPreviewWidth.toFloat() / screenW * motionEvent.x
+            val focusY = realPreviewHeight.toFloat() / screenH * motionEvent.y
+
+            val totalPicSize = captureRequest.get(CaptureRequest.SCALER_CROP_REGION)
+
+            val cutDx = (totalPicSize!!.height() - previewSize.height) / 2
+            val width = 60
+            val height = 60
+
+            val rect = Rect(focusY.toInt(), focusX.toInt() + cutDx, (focusY + height).toInt(), (focusX + cutDx + width).toInt())
+
+            creatFocusCapture(rect)
+            false
+        }
         checkPremission()
     }
 
 
     private fun checkPremission() {
-        if(!Environment.isExternalStorageManager()) {
+        if(Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
             val intent = Intent(ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
             startActivity(intent)
         }
@@ -258,7 +377,7 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
                     orientation <= 315 -> Surface.ROTATION_270
                     else -> Surface.ROTATION_0
                 }
-                relative = CameraUtils.computeRelativeRotation(characteristics, rotation)
+                relative = CameraUtils.computeRelativeRotation(characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION)!!, rotation,cameraId == FRONT_CAMERAID)
             }
         }
         orientationEventListener.enable()
@@ -398,20 +517,76 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
 
         mSession = createCaptureSession(mCamera, targets, cameraHandler)
 
+        creatPreviewCapture()
+    }
+
+    private fun creatPreviewCapture(){
+        if (characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+            && mode == CameraConfig.CameraMode.PHOTO) {
+            mBinding.tvFlash.text = "自动"
+            setFlashDrawable(R.drawable.ic_flash_auto)
+            flashMode = CameraMetadata.FLASH_MODE_SINGLE
+            flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON_AUTO_FLASH
+            flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_START
+        } else {
+            mBinding.tvFlash.text = "关闭"
+            setFlashDrawable(R.drawable.ic_flash_off)
+            flashMode = CameraMetadata.FLASH_MODE_OFF
+            flashAEMode = CameraMetadata.CONTROL_AE_MODE_ON
+            flashAEPrecapture = CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_IDLE
+        }
+
         captureRequest = mCamera.createCaptureRequest(
             CameraDevice.TEMPLATE_PREVIEW
         ).apply {
-            addTarget(surface)
-            set(
-                CaptureRequest.CONTROL_AF_MODE,
-                CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
-            )
-            set(
-                CaptureRequest.FLASH_MODE,
-                flashMode
-            )
+            addTarget(Surface(mBinding.textureView.surfaceTexture))
+            set(CaptureRequest.FLASH_MODE, flashMode)
+            set(CaptureRequest.CONTROL_AE_MODE, flashAEMode)
         }
-        mSession.setRepeatingRequest(captureRequest.build(), null, cameraHandler)
+        mSession.setRepeatingRequest(captureRequest.build(), captureCallBack, cameraHandler)
+    }
+
+    private fun creatPreCapture(){
+        val preCaptureRequest = mCamera.createCaptureRequest(
+            CameraDevice.TEMPLATE_PREVIEW
+        ).apply {
+            addTarget(Surface(mBinding.textureView.surfaceTexture))
+            set(CaptureRequest.FLASH_MODE, flashMode)
+            set(CaptureRequest.CONTROL_AE_MODE, flashAEMode)
+            set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER, flashAEPrecapture)
+        }
+        preCaptureReady = true
+        mSession.capture(preCaptureRequest.build(), captureCallBack, cameraHandler)
+    }
+
+    private fun creatFocusCapture(rect: Rect){
+        val focusCaptureRequest = mCamera.createCaptureRequest(
+            CameraDevice.TEMPLATE_PREVIEW
+        ).apply {
+            addTarget(Surface(mBinding.textureView.surfaceTexture))
+            set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(MeteringRectangle(rect, 1000)))
+            set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(MeteringRectangle(rect, 1000)))
+            set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+            set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_START)
+        }
+        preCaptureReady = true
+        mSession.capture(focusCaptureRequest.build(), captureCallBack, cameraHandler)
+    }
+
+    private val captureCallBack = object :CaptureCallback(){
+
+        override fun onCaptureCompleted(
+            session: CameraCaptureSession,
+            request: CaptureRequest,
+            result: TotalCaptureResult
+        ) {
+            super.onCaptureCompleted(session, request, result)
+            val state = result.get(CaptureResult.CONTROL_AE_STATE)
+            if (state == CaptureResult.CONTROL_AE_STATE_PRECAPTURE && preCaptureReady) {
+                preCaptureReady = false
+                takePicture()
+            }
+        }
     }
 
     private suspend fun createCaptureSession(
@@ -458,7 +633,7 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
             image.close()
         }, imageReaderHandler)
 
-        val captureRequest = mSession.device.createCaptureRequest(
+        val capturePictureRequest = mSession.device.createCaptureRequest(
             CameraDevice.TEMPLATE_STILL_CAPTURE)
             .apply {
                 addTarget(imageReader.surface)
@@ -472,7 +647,9 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
                 }
 
             }
-        mSession.capture(captureRequest.build(), object : CameraCaptureSession.CaptureCallback() {
+        capturePictureRequest.set(CaptureRequest.FLASH_MODE, flashMode)
+        capturePictureRequest.set(CaptureRequest.CONTROL_AE_MODE, flashAEMode)
+        mSession.capture(capturePictureRequest.build(), object : CameraCaptureSession.CaptureCallback() {
 
             override fun onCaptureStarted(
                 session: CameraCaptureSession,
@@ -502,10 +679,14 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         val buffer = image.planes[0].buffer
         val bytes = ByteArray(buffer.remaining()).apply { buffer.get(this) }
         file = getOutputMediaFile("jpg")
-        FileOutputStream(file).use { it.write(bytes) }
+        FileOutputStream(file).use {
+            it.write(bytes)
+            it.close()
+        }
         val mirrored = characteristics.get(CameraCharacteristics.LENS_FACING) ==
                 CameraCharacteristics.LENS_FACING_FRONT
-        val exifOrientation = computeExifOrientation(relative, mirrored)
+        Log.e(TAG, "savePicture relative = $relative   mirrored = $mirrored" )
+        val exifOrientation = CameraUtils.computeExifOrientation(relative, mirrored)
         val exif = ExifInterface(file!!.absolutePath)
         exif.setAttribute(
             ExifInterface.TAG_ORIENTATION, exifOrientation.toString())
@@ -516,23 +697,23 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
     }
 
     private fun saveRAW(image: Image){
-        if(Environment.isExternalStorageManager()) {
-            val buffer = image.planes[0].buffer
-            val bytes = ByteArray(buffer.remaining()).apply { buffer.get(this) }
-            FileOutputStream(getOutputMediaFile("raw")).use { it.write(bytes) }
-        } else {
+        if(Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
             Log.e(TAG, "no premission: ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION YUV cannot be saved ")
+            return
         }
+        val buffer = image.planes[0].buffer
+        val bytes = ByteArray(buffer.remaining()).apply { buffer.get(this) }
+        FileOutputStream(getOutputMediaFile("raw")).use { it.write(bytes) }
 
     }
 
     private fun saveYUV(image: Image) {
-        if(Environment.isExternalStorageManager()) {
-            val bytes = CameraUtils.YUV_420_888toNV21(image)
-            FileOutputStream(getOutputMediaFile("yuv")).use { it.write(bytes) }
-        } else {
+        if(Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
             Log.e(TAG, "no premission: ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION Raw cannot be saved ")
+            return
         }
+        val bytes = CameraUtils.YUV_420_888toNV21(image)
+        FileOutputStream(getOutputMediaFile("yuv")).use { it.write(bytes) }
     }
 
 
@@ -569,6 +750,7 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
             addTarget(surface)
             addTarget(mediaSurface)
             set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(mediaFps, mediaFps))
+            set(CaptureRequest.FLASH_MODE, flashMode)
         }
         mSession.setRepeatingRequest(captureRequest.build(), null, cameraHandler)
         mediaRecorder.start()
@@ -576,7 +758,10 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         mBinding.tvTips.visibility= View.VISIBLE
         mBinding.ivAlbum.visibility= View.GONE
         mBinding.ivSwitch.visibility= View.GONE
-        mode = CameraConfig.CameraMode.VIDEO
+        mBinding.tlMode.visibility= View.GONE
+        mBinding.llTop.visibility= View.GONE
+        mBinding.ivCamera.setImageResource(R.drawable.ic_video_stop)
+
         videoStatus=CameraConfig.VideoState.RECORDING
     }
 
@@ -589,7 +774,9 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         mBinding.tvTips.visibility= View.GONE
         mBinding.ivAlbum.visibility= View.VISIBLE
         mBinding.ivSwitch.visibility= View.VISIBLE
-        mode = CameraConfig.CameraMode.PHOTO
+        mBinding.tlMode.visibility= View.VISIBLE
+        mBinding.llTop.visibility= View.VISIBLE
+        mBinding.ivCamera.setImageResource(R.drawable.ic_video)
         videoStatus=CameraConfig.VideoState.PREVIEW
 
         CameraUtils.showThumbnail(this, file, mBinding.ivAlbum)
@@ -604,7 +791,7 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
         setAudioSource(MediaRecorder.AudioSource.MIC)
         setVideoSource(MediaRecorder.VideoSource.SURFACE)
         setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-        setOutputFile(file)
+        setOutputFile(file?.path)
         setVideoEncodingBitRate(RECORDER_VIDEO_BITRATE)
         if (mediaFps > 0) setVideoFrameRate(mediaFps)
         setVideoSize(mediaSize.width, mediaSize.height)
@@ -641,18 +828,30 @@ class Camera2Activity : BaseActivity<ActivityCamera2Binding>() {
                     )
     }
 
+    val job = lifecycleScope.launch {
+        delay(3000)
+        mBinding.ivFocus.visibility = View.INVISIBLE
+    }
 
-    private fun computeExifOrientation(rotationDegrees: Int, mirrored: Boolean) = when {
-        rotationDegrees == 0 && !mirrored -> ExifInterface.ORIENTATION_NORMAL
-        rotationDegrees == 0 && mirrored -> ExifInterface.ORIENTATION_FLIP_HORIZONTAL
-        rotationDegrees == 180 && !mirrored -> ExifInterface.ORIENTATION_ROTATE_180
-        rotationDegrees == 180 && mirrored -> ExifInterface.ORIENTATION_FLIP_VERTICAL
-        rotationDegrees == 270 && mirrored -> ExifInterface.ORIENTATION_TRANSVERSE
-        rotationDegrees == 90 && !mirrored -> ExifInterface.ORIENTATION_ROTATE_90
-        rotationDegrees == 90 && mirrored -> ExifInterface.ORIENTATION_TRANSPOSE
-        rotationDegrees == 270 && mirrored -> ExifInterface.ORIENTATION_ROTATE_270
-        rotationDegrees == 270 && !mirrored -> ExifInterface.ORIENTATION_TRANSVERSE
-        else -> ExifInterface.ORIENTATION_UNDEFINED
+    private suspend fun showFocus(x: Float, y: Float) {
+        job.cancel()
+        mBinding.ivFocus.visibility = View.VISIBLE
+        mBinding.ivFocus.x = x - mBinding.ivFocus.width / 2
+        mBinding.ivFocus.y = mBinding.surfaceView.top + y - mBinding.ivFocus.height / 2
+        job.join()
+    }
+
+
+
+    private fun setFlashDrawable(@DrawableRes res: Int){
+        val drawable = ContextCompat.getDrawable(this, res)
+        drawable?.setBounds(0, 0, drawable.minimumWidth, drawable.minimumHeight)
+        mBinding.tvFlash.setCompoundDrawables(null,drawable,null,null)
+    }
+
+    private fun resetCamera() {
+        mCamera.close()
+        initCamera()
     }
 
     private fun releaseCamera() {
