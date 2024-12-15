@@ -14,6 +14,7 @@ import android.util.Size
 import android.view.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
+import androidx.camera.camera2.internal.compat.workaround.ForceCloseCaptureSession.OnConfigured
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.core.*
 import androidx.camera.core.ImageCapture.FLASH_MODE_AUTO
@@ -202,9 +203,7 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             cameraProvider = cameraProviderFuture.get()
-            mBinding.cameraPreview.post {
-                bindPreview()
-            }
+            bindPreview()
         }, ContextCompat.getMainExecutor(this))
     }
 
@@ -212,6 +211,23 @@ class CameraXActivity : BaseActivity<ActivityCameraxBinding>() {
     @SuppressLint("UnsafeOptInUsageError")
     private fun bindPreview() {
         val d=resources.displayMetrics
+        val screenWidth = d.widthPixels
+        val screenHeight = d.heightPixels
+        var viewRatio = 0f
+        if (ratio == AspectRatio.RATIO_4_3) {
+            viewRatio = 4f/3
+        }
+        if (ratio == AspectRatio.RATIO_16_9) {
+            viewRatio = 16f/9
+        }
+        if (ratio == -1) {
+            viewRatio = screenHeight.toFloat()/screenWidth
+        }
+        val height = screenWidth * viewRatio
+        val layoutParams = mBinding.cameraPreview.layoutParams
+        layoutParams.width = screenWidth
+        layoutParams.height = height.toInt()
+        mBinding.cameraPreview.layoutParams = layoutParams
 
         val cameraSelector = CameraSelector.Builder()
             .requireLensFacing(lensFacing)
